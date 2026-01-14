@@ -5,9 +5,9 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "example:feature-validation": "tsx examples/feature-validation/cli.ts"
+    "build": "tsc && npm run copy:examples",
+    "copy:examples": "mkdir -p dist/examples && cp -r src/examples/* dist/examples/",
+    "start": "node dist/index.js"
   },
   "keywords": [],
   "author": "",

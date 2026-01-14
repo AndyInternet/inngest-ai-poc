@@ -1,4 +1,4 @@
-import { inngest } from "../../src/inngest/client";
+import { inngest } from "../../inngest/client";
 import {
   gatherContextAgent,
   analyzeFeatureAgent,
@@ -8,7 +8,7 @@ import {
   executeTransition,
   conditionalTransition,
   linearTransition,
-} from "../../src/ai/flow";
+} from "../../ai/flow";
 
 // Step 1: Gather context - determines if we have enough information
 export const gatherContextFunction = inngest.createFunction(
@@ -34,7 +34,7 @@ export const gatherContextFunction = inngest.createFunction(
       // Stream questions message to UI via WebSocket
       if (sessionId) {
         await step.run("send-questions-to-ui", async () => {
-          const { streamingMessages } = await import("../../src/ai/agent");
+          const { streamingMessages } = await import("../../ai/agent");
           const messageWithTimestamp = {
             data: {
               type: "questions",
@@ -52,7 +52,7 @@ export const gatherContextFunction = inngest.createFunction(
           streamingMessages.get(sessionId)!.push(messageWithTimestamp);
 
           // Broadcast via WebSocket
-          const { broadcastToSession } = await import("../../src/index");
+          const { broadcastToSession } = await import("../../index");
           broadcastToSession(sessionId, messageWithTimestamp);
         });
       }

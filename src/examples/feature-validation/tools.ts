@@ -1,4 +1,4 @@
-import type { Tool } from '../../src/ai/tools';
+import type { Tool } from '../../ai/tools';
 
 export const getCurrentDateTool: Tool = {
   type: 'pre-call',

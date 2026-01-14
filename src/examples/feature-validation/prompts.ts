@@ -1,4 +1,4 @@
-import type { Prompt } from '../../src/ai/prompt';
+import type { Prompt } from '../../ai/prompt';
 
 export const gatherContextPrompt = (featureDescription: string, existingContext: string): Prompt => ({
   messages: [

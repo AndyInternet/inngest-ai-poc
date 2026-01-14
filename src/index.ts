@@ -83,7 +83,7 @@ export function broadcastToSession(sessionId: string, message: any) {
 }
 
 app.use(express.json());
-app.use(express.static("examples"));
+app.use(express.static("dist/examples"));
 
 app.use(
   "/api/inngest",

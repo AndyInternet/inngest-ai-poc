@@ -1,6 +1,6 @@
-import { runAgent } from "../../src/ai/agent";
-import { createLLMClient } from "../../src/ai/providers";
-import type { StepTools } from "../../src/ai/agent";
+import { runAgent } from "../../ai/agent";
+import { createLLMClient } from "../../ai/providers";
+import type { StepTools } from "../../ai/agent";
 import {
   gatherContextPrompt,
   analyzeFeaturePrompt,
