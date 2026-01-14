@@ -1,0 +1,1619 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>AI Feature Validation Tool</title>
+        <style>
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    sans-serif;
+                margin: 0;
+                padding: 0;
+                background: white;
+                height: 100vh;
+                color: black;
+                overflow: hidden;
+            }
+
+            .container {
+                width: 100%;
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+                background: white;
+            }
+
+            .header {
+                background: white;
+                color: black;
+                padding: 20px 30px;
+                border-bottom: 1px solid black;
+                flex-shrink: 0;
+            }
+
+            .header h1 {
+                margin: 0;
+                font-size: 1.8em;
+                font-weight: 600;
+            }
+
+            .header p {
+                margin: 5px 0 0 0;
+                font-size: 0.9em;
+                color: #666;
+            }
+
+            .main-content {
+                display: flex;
+                flex: 1;
+                overflow: hidden;
+            }
+
+            .input-panel {
+                width: 400px;
+                flex-shrink: 0;
+                padding: 30px;
+                border-right: 1px solid black;
+                background: white;
+                overflow-y: auto;
+            }
+
+            .streaming-panel {
+                flex: 1;
+                padding: 30px;
+                background: white;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+
+            .form-group {
+                margin-bottom: 25px;
+            }
+
+            label {
+                display: block;
+                margin-bottom: 8px;
+                font-weight: 600;
+                color: black;
+                font-size: 0.9em;
+            }
+
+            textarea {
+                width: 100%;
+                padding: 12px;
+                border: 1px solid black;
+                border-radius: 0;
+                font-size: 14px;
+                font-family: inherit;
+                resize: vertical;
+                min-height: 100px;
+            }
+
+            textarea:focus {
+                outline: none;
+                border-color: black;
+            }
+
+            .submit-btn {
+                background: linear-gradient(to bottom, #333, #000);
+                color: white;
+                border: 1px solid black;
+                padding: 12px 24px;
+                border-radius: 0;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+                width: 100%;
+                transition: all 0.3s ease;
+            }
+
+            .submit-btn:hover:not(:disabled) {
+                background: linear-gradient(to bottom, #555, #222);
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            }
+
+            .submit-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+            .status {
+                margin: 15px 0;
+                padding: 12px;
+                border: 1px solid black;
+                font-weight: 500;
+                text-align: center;
+                font-size: 14px;
+                flex-shrink: 0;
+            }
+
+            .status.idle {
+                background: white;
+                color: black;
+            }
+
+            .status.connecting {
+                background: white;
+                color: black;
+            }
+
+            .status.connected {
+                background: black;
+                color: white;
+            }
+
+            .status.error {
+                background: white;
+                color: black;
+                border-style: dashed;
+            }
+
+            .messages-container {
+                border: 1px solid black;
+                border-radius: 0;
+                flex: 1;
+                overflow-y: auto;
+                background: white;
+            }
+
+            .messages {
+                padding: 15px;
+            }
+
+            .message {
+                margin-bottom: 15px;
+                padding: 12px;
+                border: 1px solid black;
+                background: white;
+            }
+
+            .message.llm_response {
+                border-style: solid;
+            }
+
+            .message.tool_result {
+                border-style: dashed;
+            }
+
+            .message.tool_error {
+                border-style: dashed;
+            }
+
+            .message.final_response {
+                background: white;
+                border-width: 1px;
+            }
+
+            .message-header {
+                font-weight: 600;
+                color: black;
+                margin-bottom: 8px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 13px;
+            }
+
+            .message-meta {
+                font-size: 11px;
+                color: #666;
+                margin-bottom: 10px;
+            }
+
+            .message-content {
+                color: black;
+                line-height: 1.5;
+                white-space: pre-wrap;
+                max-height: 200px;
+                overflow-y: auto;
+                overflow-x: hidden;
+                font-size: 13px;
+            }
+
+            .message-content.scrollable {
+                display: block;
+                padding-right: 8px;
+            }
+
+            .message-content.final-report {
+                max-height: none;
+                white-space: normal;
+            }
+
+            .message-content::-webkit-scrollbar {
+                width: 6px;
+            }
+
+            .message-content::-webkit-scrollbar-track {
+                background: white;
+            }
+
+            .message-content::-webkit-scrollbar-thumb {
+                background: black;
+            }
+
+            .message-content::-webkit-scrollbar-thumb:hover {
+                background: #333;
+            }
+
+            .message-content pre {
+                background: white;
+                padding: 10px;
+                border-radius: 0;
+                overflow-x: auto;
+                font-size: 12px;
+                border: 1px solid black;
+            }
+
+            /* Markdown styles for final report */
+            .message-content.final-report h1 {
+                font-size: 1.6em;
+                margin: 0.5em 0;
+                color: black;
+                font-weight: 700;
+            }
+
+            .message-content.final-report h2 {
+                font-size: 1.3em;
+                margin: 0.5em 0;
+                color: black;
+                border-bottom: 1px solid black;
+                padding-bottom: 0.3em;
+                font-weight: 600;
+            }
+
+            .message-content.final-report h3 {
+                font-size: 1.1em;
+                margin: 0.5em 0;
+                color: black;
+                font-weight: 600;
+            }
+
+            .message-content.final-report p {
+                margin: 0.8em 0;
+            }
+
+            .message-content.final-report ul,
+            .message-content.final-report ol {
+                margin: 0.8em 0;
+                padding-left: 2em;
+            }
+
+            .message-content.final-report li {
+                margin: 0.4em 0;
+            }
+
+            .message-content.final-report code {
+                background: white;
+                padding: 0.2em 0.4em;
+                border-radius: 0;
+                font-size: 0.9em;
+                border: 1px solid black;
+            }
+
+            .message-content.final-report pre code {
+                background: none;
+                padding: 0;
+                border: none;
+            }
+
+            .message-content.final-report blockquote {
+                border-left: 3px solid black;
+                padding-left: 1em;
+                margin: 1em 0;
+                color: black;
+            }
+
+            .message-content.final-report strong {
+                font-weight: 700;
+                color: black;
+            }
+
+            .message-content.final-report em {
+                font-style: italic;
+            }
+
+            .message-content.final-report table {
+                border-collapse: collapse;
+                width: 100%;
+                margin: 1em 0;
+            }
+
+            .message-content.final-report th,
+            .message-content.final-report td {
+                border: 1px solid black;
+                padding: 0.5em;
+                text-align: left;
+            }
+
+            .message-content.final-report th {
+                background: white;
+                font-weight: 600;
+            }
+
+            .workflow-steps {
+                background: white;
+                border: 1px solid black;
+                padding: 15px;
+                margin-bottom: 20px;
+            }
+
+            .workflow-steps h3 {
+                margin: 0 0 12px 0;
+                color: black;
+                font-size: 14px;
+                font-weight: 600;
+            }
+
+            .step {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 8px;
+                padding: 8px;
+                background: white;
+                border: 1px solid black;
+                font-size: 13px;
+                position: relative;
+            }
+
+            .step-icon {
+                font-size: 16px;
+            }
+
+            .step-spinner {
+                display: none;
+                width: 16px;
+                height: 16px;
+                border: 2px solid white;
+                border-radius: 50%;
+                border-top-color: black;
+                animation: spin 1s ease-in-out infinite;
+                margin-left: auto;
+            }
+
+            .step.active {
+                background: black;
+                color: white;
+            }
+
+            .step.active .step-spinner {
+                display: block;
+                border: 2px solid #333;
+                border-top-color: white;
+            }
+
+            .clear-btn {
+                background: linear-gradient(to bottom, #f5f5f5, #e0e0e0);
+                color: black;
+                border: 1px solid black;
+                padding: 8px 16px;
+                cursor: pointer;
+                font-size: 13px;
+                margin-bottom: 15px;
+                transition: all 0.3s ease;
+            }
+
+            .clear-btn:hover {
+                background: linear-gradient(to bottom, #e0e0e0, #c0c0c0);
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+            }
+
+            .examples {
+                margin-top: 20px;
+                padding: 20px;
+                background: white;
+                border-radius: 0;
+                border: 1px solid black;
+            }
+
+            .examples h4 {
+                margin: 0 0 15px 0;
+                color: black;
+                font-weight: 600;
+            }
+
+            .example-btn {
+                display: block;
+                width: 100%;
+                text-align: left;
+                background: linear-gradient(to bottom, #f5f5f5, #e0e0e0);
+                border: 1px solid black;
+                padding: 10px;
+                margin-bottom: 8px;
+                border-radius: 0;
+                cursor: pointer;
+                transition: all 0.3s ease;
+            }
+
+            .example-btn:hover {
+                background: linear-gradient(to bottom, #e0e0e0, #c0c0c0);
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+            }
+
+            .loading-spinner {
+                display: inline-block;
+                width: 20px;
+                height: 20px;
+                border: 3px solid white;
+                border-radius: 50%;
+                border-top-color: black;
+                animation: spin 1s ease-in-out infinite;
+            }
+
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            @media (max-width: 768px) {
+                .main-content {
+                    grid-template-columns: 1fr;
+                }
+
+                .input-panel {
+                    border-right: none;
+                    border-bottom: 1px solid black;
+                }
+
+                body {
+                    padding: 0;
+                }
+
+                .header {
+                    padding: 15px 20px;
+                }
+
+                .input-panel,
+                .streaming-panel {
+                    padding: 20px;
+                }
+            }
+
+            .placeholder-text {
+                text-align: center;
+                color: #666;
+                font-style: italic;
+                margin-top: 50px;
+            }
+
+            .questions-container {
+                background: white;
+                border: 1px solid black;
+                border-radius: 0;
+                padding: 20px;
+                margin-bottom: 20px;
+            }
+
+            .questions-container h4 {
+                margin: 0 0 15px 0;
+                color: black;
+                font-weight: 600;
+            }
+
+            .question-item {
+                margin-bottom: 15px;
+            }
+
+            .question-item label {
+                display: block;
+                font-weight: 600;
+                margin-bottom: 5px;
+                color: black;
+            }
+
+            .question-item input,
+            .question-item textarea {
+                width: 100%;
+                padding: 10px;
+                border: 1px solid black;
+                border-radius: 0;
+                font-family: inherit;
+            }
+
+            /* Report Drawer */
+            .report-drawer {
+                position: fixed;
+                top: 0;
+                right: -800px;
+                width: 800px;
+                height: 100vh;
+                background: white;
+                border-left: 1px solid black;
+                box-shadow: -5px 0 15px rgba(0, 0, 0, 0.2);
+                transition: right 0.3s ease-out;
+                z-index: 1000;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .report-drawer.open {
+                right: 0;
+            }
+
+            .drawer-header {
+                padding: 20px 30px;
+                border-bottom: 1px solid black;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                background: white;
+                flex-shrink: 0;
+            }
+
+            .drawer-header h2 {
+                margin: 0;
+                font-size: 1.5em;
+                font-weight: 600;
+            }
+
+            .drawer-actions {
+                display: flex;
+                gap: 10px;
+            }
+
+            .drawer-btn {
+                background: linear-gradient(to bottom, #f5f5f5, #e0e0e0);
+                color: black;
+                border: 1px solid black;
+                padding: 8px 16px;
+                cursor: pointer;
+                font-size: 13px;
+                font-weight: 600;
+                transition: all 0.3s ease;
+            }
+
+            .drawer-btn:hover {
+                background: linear-gradient(to bottom, #e0e0e0, #c0c0c0);
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+            }
+
+            .drawer-btn.download {
+                background: linear-gradient(to bottom, #333, #000);
+                color: white;
+            }
+
+            .drawer-btn.download:hover {
+                background: linear-gradient(to bottom, #555, #222);
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            }
+
+            .drawer-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 30px;
+                line-height: 1.6;
+            }
+
+            /* Apply markdown styles to drawer content */
+            .drawer-content h1 {
+                font-size: 1.8em;
+                margin: 0.5em 0;
+                color: black;
+                font-weight: 700;
+            }
+
+            .drawer-content h2 {
+                font-size: 1.4em;
+                margin: 0.5em 0;
+                color: black;
+                border-bottom: 1px solid black;
+                padding-bottom: 0.3em;
+                font-weight: 600;
+            }
+
+            .drawer-content h3 {
+                font-size: 1.2em;
+                margin: 0.5em 0;
+                color: black;
+                font-weight: 600;
+            }
+
+            .drawer-content p {
+                margin: 0.8em 0;
+            }
+
+            .drawer-content ul,
+            .drawer-content ol {
+                margin: 0.8em 0;
+                padding-left: 2em;
+            }
+
+            .drawer-content li {
+                margin: 0.4em 0;
+            }
+
+            .drawer-content code {
+                background: white;
+                padding: 0.2em 0.4em;
+                border-radius: 0;
+                font-size: 0.9em;
+                border: 1px solid black;
+                font-family: monospace;
+            }
+
+            .drawer-content pre {
+                background: white;
+                padding: 10px;
+                border-radius: 0;
+                overflow-x: auto;
+                font-size: 12px;
+                border: 1px solid black;
+            }
+
+            .drawer-content pre code {
+                background: none;
+                padding: 0;
+                border: none;
+            }
+
+            .drawer-content blockquote {
+                border-left: 3px solid black;
+                padding-left: 1em;
+                margin: 1em 0;
+                color: black;
+            }
+
+            .drawer-content strong {
+                font-weight: 700;
+                color: black;
+            }
+
+            .drawer-content em {
+                font-style: italic;
+            }
+
+            .drawer-content table {
+                border-collapse: collapse;
+                width: 100%;
+                margin: 1em 0;
+            }
+
+            .drawer-content th,
+            .drawer-content td {
+                border: 1px solid black;
+                padding: 0.5em;
+                text-align: left;
+            }
+
+            .drawer-content th {
+                background: white;
+                font-weight: 600;
+            }
+
+            .drawer-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.5);
+                opacity: 0;
+                visibility: hidden;
+                transition:
+                    opacity 0.3s ease-out,
+                    visibility 0.3s;
+                z-index: 999;
+            }
+
+            .drawer-overlay.active {
+                opacity: 1;
+                visibility: visible;
+            }
+
+            @media (max-width: 800px) {
+                .report-drawer {
+                    width: 100%;
+                    right: -100%;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🤖 AI Feature Validation Tool</h1>
+                <p>
+                    Analyze your feature ideas with AI-powered agents in
+                    real-time
+                </p>
+            </div>
+
+            <div class="main-content">
+                <div class="input-panel">
+                    <div class="workflow-steps">
+                        <h3>AI Workflow Steps</h3>
+                        <div class="step" id="step-context">
+                            <span class="step-icon">🔍</span>
+                            <span>Context Gathering</span>
+                            <div class="step-spinner"></div>
+                        </div>
+                        <div class="step" id="step-analysis">
+                            <span class="step-icon">⚙️</span>
+                            <span>Feature Analysis</span>
+                            <div class="step-spinner"></div>
+                        </div>
+                        <div class="step" id="step-report">
+                            <span class="step-icon">📄</span>
+                            <span>Report Generation</span>
+                            <div class="step-spinner"></div>
+                        </div>
+                    </div>
+
+                    <form id="featureForm">
+                        <div class="form-group">
+                            <label for="featureDescription"
+                                >Feature Description</label
+                            >
+                            <textarea
+                                id="featureDescription"
+                                placeholder="Describe the feature you want to validate. Be as specific or general as you like - our AI agents will help gather the right context."
+                                required
+                            ></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="existingContext"
+                                >Additional Context (Optional)</label
+                            >
+                            <textarea
+                                id="existingContext"
+                                placeholder="Any additional information about your project, users, or constraints that might be helpful."
+                            ></textarea>
+                        </div>
+
+                        <button type="submit" class="submit-btn" id="submitBtn">
+                            <span id="submitText"
+                                >🚀 Validate Feature with AI</span
+                            >
+                            <span
+                                id="submitSpinner"
+                                class="loading-spinner"
+                                style="display: none"
+                            ></span>
+                        </button>
+                    </form>
+
+                    <div class="examples">
+                        <h4>💡 Example Features to Try</h4>
+                        <button
+                            class="example-btn"
+                            onclick="setExample('simple')"
+                        >
+                            "Add a dark mode toggle to the user settings page"
+                        </button>
+                        <button
+                            class="example-btn"
+                            onclick="setExample('complex')"
+                        >
+                            "Improve user engagement and retention"
+                        </button>
+                        <button
+                            class="example-btn"
+                            onclick="setExample('technical')"
+                        >
+                            "Implement real-time collaborative editing like
+                            Google Docs"
+                        </button>
+                    </div>
+                </div>
+
+                <div class="streaming-panel">
+                    <div
+                        style="
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            margin-bottom: 20px;
+                        "
+                    >
+                        <h3 style="margin: 0">Real-time AI Updates</h3>
+                        <button class="clear-btn" onclick="clearMessages()">
+                            Clear Messages
+                        </button>
+                    </div>
+
+                    <div id="status" class="status idle">
+                        Ready to analyze your feature idea
+                    </div>
+
+                    <div
+                        id="questions-container"
+                        class="questions-container"
+                        style="display: none"
+                    >
+                        <h4>🤔 The AI needs more information:</h4>
+                        <div id="questions-list"></div>
+                        <button
+                            id="submit-answers"
+                            class="submit-btn"
+                            onclick="submitAnswers()"
+                        >
+                            Submit Answers
+                        </button>
+                    </div>
+
+                    <div class="messages-container">
+                        <div id="messages" class="messages">
+                            <div class="placeholder-text">
+                                <p>
+                                    🎯 Enter a feature description above and
+                                    click "Validate Feature with AI"
+                                </p>
+                                <p>
+                                    You'll see real-time updates from our AI
+                                    agents as they:
+                                </p>
+                                <p>
+                                    • Analyze your requirements<br />
+                                    • Research and validate the idea<br />
+                                    • Generate a comprehensive report
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report Drawer -->
+        <div
+            class="drawer-overlay"
+            id="drawerOverlay"
+            onclick="closeReportDrawer()"
+        ></div>
+        <div class="report-drawer" id="reportDrawer">
+            <div class="drawer-header">
+                <h2>📄 Feature Validation Report</h2>
+                <div class="drawer-actions">
+                    <button
+                        class="drawer-btn download"
+                        onclick="downloadReport()"
+                    >
+                        💾 Download Markdown
+                    </button>
+                    <button class="drawer-btn" onclick="closeReportDrawer()">
+                        ✕ Close
+                    </button>
+                </div>
+            </div>
+            <div class="drawer-content" id="drawerContent">
+                <!-- Report content will be inserted here -->
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+        <script src="/api/realtime.js"></script>
+        <script>
+            let subscription = null;
+            let currentSessionId = null;
+            let realtimeLoaded = false;
+            let reportMarkdown = ""; // Store raw markdown for download
+
+            // Initialize when DOM is ready
+            document.addEventListener("DOMContentLoaded", () => {
+                if (typeof window.InngestRealtime !== "undefined") {
+                    console.log("✅ InngestRealtime loaded successfully");
+                    realtimeLoaded = true;
+                } else {
+                    console.error("❌ Failed to load InngestRealtime");
+                    updateStatus(
+                        "Real-time streaming unavailable - library failed to load",
+                        "error",
+                    );
+                }
+            });
+
+            // Example feature descriptions
+            const examples = {
+                simple: {
+                    description:
+                        "Add a dark mode toggle to the user settings page",
+                    context:
+                        "We have a React-based web application with a settings page. Users have been requesting a dark theme option to reduce eye strain during night usage.",
+                },
+                complex: {
+                    description: "Improve user engagement and retention",
+                    context:
+                        "Our SaaS platform has been seeing declining user activity after the initial signup. We need to understand what features or changes could help keep users coming back.",
+                },
+                technical: {
+                    description:
+                        "Implement real-time collaborative editing like Google Docs",
+                    context:
+                        "We're building a document editor and want to add real-time collaboration features. We need to understand the technical complexity and user value.",
+                },
+            };
+
+            function setExample(type) {
+                const example = examples[type];
+                document.getElementById("featureDescription").value =
+                    example.description;
+                document.getElementById("existingContext").value =
+                    example.context;
+            }
+
+            function updateStatus(message, type = "idle") {
+                const statusEl = document.getElementById("status");
+                statusEl.textContent = message;
+                statusEl.className = `status ${type}`;
+            }
+
+            function updateWorkflowStep(step) {
+                // Reset all steps
+                ["step-context", "step-analysis", "step-report"].forEach(
+                    (id) => {
+                        document.getElementById(id).classList.remove("active");
+                    },
+                );
+
+                // Activate current step
+                if (step) {
+                    document
+                        .getElementById(`step-${step}`)
+                        .classList.add("active");
+                }
+            }
+
+            // Message tracking for streaming updates
+            const activeMessages = new Map(); // Track messages being streamed
+            let updateInterval = null;
+
+            function getMessageKey(data) {
+                // Create unique key for message to track updates
+                return `${data.type}-${data.agentName}-${data.iteration || "1"}`;
+            }
+
+            function addMessage(data) {
+                const messagesEl = document.getElementById("messages");
+
+                // Remove placeholder text
+                const placeholder =
+                    messagesEl.querySelector(".placeholder-text");
+                if (placeholder) {
+                    placeholder.remove();
+                }
+
+                const timestamp = new Date().toLocaleTimeString();
+                const agentName = data.agentName || "AI Agent";
+                const iteration = data.iteration || "N/A";
+
+                let header = "";
+                let content = "";
+                let icon = "";
+
+                switch (data.type) {
+                    case "llm_response":
+                        icon = "🤖";
+                        header = `LLM Response - ${agentName}`;
+                        content = data.content;
+                        break;
+                    case "final_response":
+                        icon = "✅";
+                        header = `Final Response - ${agentName}`;
+                        content = data.content;
+                        break;
+                    case "tool_result":
+                        icon = "🔧";
+                        header = `Tool Result - ${data.toolName}`;
+                        content = JSON.stringify(data.result, null, 2);
+                        break;
+                    case "tool_error":
+                        icon = "❌";
+                        header = `Tool Error - ${data.toolName}`;
+                        content = data.error;
+                        break;
+                    case "info":
+                        icon = "ℹ️";
+                        header = `System Info`;
+                        content = data.content;
+                        break;
+                    case "questions":
+                        icon = "❓";
+                        header = `Questions Required`;
+                        content = data.content;
+                        showQuestions(data.questions);
+                        break;
+                    default:
+                        icon = "📝";
+                        header = `${data.type}`;
+                        content = JSON.stringify(data, null, 2);
+                }
+
+                // Update workflow step based on agent
+                if (data.agentName) {
+                    if (data.agentName.includes("gather-context")) {
+                        updateWorkflowStep("context");
+                    } else if (data.agentName.includes("analyze-feature")) {
+                        updateWorkflowStep("analysis");
+                    } else if (data.agentName.includes("generate-report")) {
+                        updateWorkflowStep("report");
+                    }
+                }
+
+                // Check if this is an update to existing message or new message
+                const messageKey = getMessageKey(data);
+                let messageEl = activeMessages.get(messageKey);
+
+                if (!messageEl) {
+                    // Create new message element
+                    messageEl = document.createElement("div");
+                    messageEl.className = `message ${data.type}`;
+                    messageEl.dataset.messageKey = messageKey;
+                    messagesEl.appendChild(messageEl);
+
+                    // Track for updates (except final responses)
+                    if (
+                        data.type !== "final_response" &&
+                        data.type !== "tool_result" &&
+                        data.type !== "tool_error"
+                    ) {
+                        activeMessages.set(messageKey, messageEl);
+                    }
+                }
+
+                // Determine content class and rendering
+                let contentClass = "message-content";
+                let renderedContent = content;
+
+                if (
+                    data.type === "final_response" &&
+                    data.agentName === "generate-report"
+                ) {
+                    // Final report: open in drawer instead of showing in chat
+                    reportMarkdown = content;
+                    openReportDrawer(content);
+                    // Remove from active tracking
+                    activeMessages.delete(messageKey);
+                    // Don't display in chat, just return
+                    return;
+                } else if (data.type === "llm_response") {
+                    // LLM responses: scrollable card
+                    contentClass += " scrollable";
+                    renderedContent = content;
+                } else if (data.type === "tool_result") {
+                    // Tool results: scrollable with pre
+                    contentClass += " scrollable";
+                    renderedContent = `<pre>${content}</pre>`;
+                }
+
+                messageEl.innerHTML = `
+                    <div class="message-header">
+                        ${icon} ${header}
+                    </div>
+                    <div class="message-meta">Agent: ${agentName} | Iteration: ${iteration} | ${timestamp}</div>
+                    <div class="${contentClass}">
+                        ${renderedContent}
+                    </div>
+                `;
+
+                // Keep scrolled to bottom
+                scrollToBottom();
+            }
+
+            function scrollToBottom() {
+                // Scroll the messages-container (the actual scrollable element)
+                const messagesContainer = document.querySelector(
+                    ".messages-container",
+                );
+                if (messagesContainer) {
+                    messagesContainer.scrollTop =
+                        messagesContainer.scrollHeight;
+                }
+
+                // Scroll all active message cards to bottom
+                activeMessages.forEach((messageEl) => {
+                    const contentEl = messageEl.querySelector(
+                        ".message-content.scrollable",
+                    );
+                    if (contentEl) {
+                        contentEl.scrollTop = contentEl.scrollHeight;
+                    }
+                });
+            }
+
+            // Auto-scroll every 50ms during active streaming
+            function startAutoScroll() {
+                if (updateInterval) return;
+                updateInterval = setInterval(() => {
+                    // Always scroll to bottom when interval is running
+                    scrollToBottom();
+                }, 50);
+            }
+
+            function stopAutoScroll() {
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                    updateInterval = null;
+                }
+                activeMessages.clear();
+            }
+
+            async function startValidation(
+                featureDescription,
+                existingContext = "",
+            ) {
+                try {
+                    updateStatus("Starting AI workflow...", "connecting");
+
+                    const submitBtn = document.getElementById("submitBtn");
+                    const submitText = document.getElementById("submitText");
+                    const submitSpinner =
+                        document.getElementById("submitSpinner");
+
+                    submitBtn.disabled = true;
+                    submitText.style.display = "none";
+                    submitSpinner.style.display = "inline-block";
+
+                    // Generate session ID
+                    const sessionId =
+                        "session-" +
+                        Date.now() +
+                        "-" +
+                        Math.random().toString(36).substr(2, 9);
+                    currentSessionId = sessionId;
+
+                    // Send event to start workflow
+                    const response = await fetch("/api/trigger-workflow", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            featureDescription,
+                            existingContext,
+                            sessionId,
+                        }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(
+                            `HTTP ${response.status}: ${await response.text()}`,
+                        );
+                    }
+
+                    const result = await response.json();
+
+                    updateStatus(
+                        "Workflow started, connecting to stream...",
+                        "connecting",
+                    );
+
+                    // Start auto-scrolling
+                    startAutoScroll();
+
+                    // Connect to streaming
+                    await connectToStream(sessionId);
+                } catch (error) {
+                    console.error("Failed to start validation:", error);
+                    updateStatus(`Error: ${error.message}`, "error");
+                    resetSubmitButton();
+                    stopAutoScroll();
+                }
+            }
+
+            async function connectToStream(sessionId) {
+                try {
+                    console.log(
+                        "Attempting to connect to stream with session:",
+                        sessionId,
+                    );
+
+                    // Wait a bit for library to load if needed
+                    if (typeof window.InngestRealtime === "undefined") {
+                        console.log(
+                            "InngestRealtime not immediately available, waiting...",
+                        );
+                        let attempts = 0;
+                        while (
+                            attempts < 50 &&
+                            typeof window.InngestRealtime === "undefined"
+                        ) {
+                            await new Promise((resolve) =>
+                                setTimeout(resolve, 100),
+                            );
+                            attempts++;
+                            if (attempts % 10 === 0) {
+                                console.log(
+                                    `Still waiting for InngestRealtime... attempt ${attempts}`,
+                                );
+                            }
+                        }
+                    }
+
+                    // Final check with detailed error info
+                    if (typeof window.InngestRealtime === "undefined") {
+                        console.error(
+                            "InngestRealtime still not available after waiting",
+                        );
+                        console.log(
+                            'Window object keys containing "Inngest":',
+                            Object.keys(window).filter((k) =>
+                                k.toLowerCase().includes("inngest"),
+                            ),
+                        );
+                        console.log(
+                            "All global variables:",
+                            Object.keys(window).slice(0, 20),
+                        );
+                        throw new Error(
+                            "InngestRealtime library not loaded. Please refresh the page and check your internet connection.",
+                        );
+                    }
+
+                    console.log(
+                        "✅ InngestRealtime found:",
+                        typeof window.InngestRealtime,
+                    );
+                    console.log(
+                        "InngestRealtime methods:",
+                        Object.keys(window.InngestRealtime),
+                    );
+
+                    // Get subscription token from our server
+                    const response = await fetch("/api/subscribe-token", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ sessionId }),
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(
+                            `HTTP ${response.status}: ${await response.text()}`,
+                        );
+                    }
+
+                    const tokenData = await response.json();
+                    console.log("📝 Received token data:", {
+                        hasToken: !!tokenData.token,
+                        channel: tokenData.channel,
+                    });
+
+                    updateStatus(
+                        "Connected to AI agents - watching for updates...",
+                        "connected",
+                    );
+
+                    // Subscribe to the realtime stream with the full token data
+                    subscription = window.InngestRealtime.subscribe({
+                        token: tokenData,
+                    });
+
+                    let workflowComplete = false;
+
+                    subscription.on("connect", () => {
+                        console.log(
+                            "🎉 Successfully connected to realtime stream",
+                        );
+                        updateStatus(
+                            "✅ Streaming live updates from AI agents...",
+                            "connected",
+                        );
+                    });
+
+                    subscription.on("data", (message) => {
+                        console.log("📨 Received message:", message);
+
+                        // Handle the message data structure
+                        const messageData = message.data || message;
+                        addMessage(messageData);
+
+                        // Check for workflow completion
+                        if (
+                            messageData.type === "final_response" &&
+                            messageData.agentName === "generate-report"
+                        ) {
+                            workflowComplete = true;
+                            setTimeout(() => {
+                                updateStatus(
+                                    "✅ AI analysis complete!",
+                                    "connected",
+                                );
+                                updateWorkflowStep(null);
+                                resetSubmitButton();
+                                stopAutoScroll();
+                                if (subscription) {
+                                    subscription.close();
+                                }
+                            }, 1000);
+                        }
+                    });
+
+                    subscription.on("error", (error) => {
+                        console.error("❌ Subscription error:", error);
+                        updateStatus(
+                            `Stream error: ${error?.message || "Unknown error"}`,
+                            "error",
+                        );
+                    });
+
+                    subscription.on("disconnect", () => {
+                        console.log("🔌 Stream disconnected");
+                        if (!workflowComplete) {
+                            updateStatus(
+                                "Stream disconnected - workflow may still be running",
+                                "idle",
+                            );
+                        }
+                    });
+                } catch (error) {
+                    console.error("Connection failed:", error);
+                    updateStatus(
+                        `Connection failed: ${error.message}`,
+                        "error",
+                    );
+                    resetSubmitButton();
+                }
+            }
+
+            function resetSubmitButton() {
+                const submitBtn = document.getElementById("submitBtn");
+                const submitText = document.getElementById("submitText");
+                const submitSpinner = document.getElementById("submitSpinner");
+
+                submitBtn.disabled = false;
+                submitText.style.display = "inline";
+                submitSpinner.style.display = "none";
+            }
+
+            function clearMessages() {
+                const messagesEl = document.getElementById("messages");
+                messagesEl.innerHTML = `
+                <div class="placeholder-text">
+                    <p>Messages cleared. Ready for your next feature validation!</p>
+                </div>
+            `;
+                updateWorkflowStep(null);
+                stopAutoScroll();
+            }
+
+            // Form submission handler
+            document
+                .getElementById("featureForm")
+                .addEventListener("submit", async (e) => {
+                    e.preventDefault();
+
+                    const featureDescription = document
+                        .getElementById("featureDescription")
+                        .value.trim();
+                    const existingContext = document
+                        .getElementById("existingContext")
+                        .value.trim();
+
+                    if (!featureDescription) {
+                        alert("Please enter a feature description");
+                        return;
+                    }
+
+                    // Check if streaming is available, if not use fallback mode
+                    if (
+                        !realtimeLoaded ||
+                        typeof window.InngestRealtime === "undefined"
+                    ) {
+                        console.warn(
+                            "InngestRealtime not available, starting validation without streaming",
+                        );
+
+                        addMessage({
+                            type: "info",
+                            content:
+                                "⚠️  Real-time streaming unavailable. Validation will run in background mode.\n\nYou can monitor progress at the Inngest dashboard: http://localhost:8288",
+                            agentName: "System",
+                        });
+
+                        updateStatus(
+                            "Starting validation (background mode)...",
+                            "connecting",
+                        );
+
+                        const sessionId =
+                            "session-" +
+                            Date.now() +
+                            "-" +
+                            Math.random().toString(36).substr(2, 9);
+
+                        const submitBtn = document.getElementById("submitBtn");
+                        const submitText =
+                            document.getElementById("submitText");
+                        const submitSpinner =
+                            document.getElementById("submitSpinner");
+
+                        submitBtn.disabled = true;
+                        submitText.style.display = "none";
+                        submitSpinner.style.display = "inline-block";
+
+                        try {
+                            const response = await fetch(
+                                "/api/trigger-workflow",
+                                {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type": "application/json",
+                                    },
+                                    body: JSON.stringify({
+                                        featureDescription,
+                                        existingContext,
+                                        sessionId,
+                                    }),
+                                },
+                            );
+
+                            if (response.ok) {
+                                const result = await response.json();
+
+                                addMessage({
+                                    type: "info",
+                                    content: `✅ Validation workflow started successfully!\n\n📋 Event ID: ${result.eventId}\n🎯 Session ID: ${sessionId}\n\n🔗 Monitor real-time progress:\nhttp://localhost:8288`,
+                                    agentName: "System",
+                                });
+
+                                updateStatus(
+                                    "Workflow running - check dashboard for progress",
+                                    "connected",
+                                );
+
+                                setTimeout(() => {
+                                    resetSubmitButton();
+                                    updateStatus(
+                                        "Ready for next validation",
+                                        "idle",
+                                    );
+                                }, 5000);
+                            } else {
+                                const errorText = await response.text();
+                                throw new Error(
+                                    `Server error: ${response.status} - ${errorText}`,
+                                );
+                            }
+                        } catch (err) {
+                            console.error("Workflow start error:", err);
+                            updateStatus(`Error: ${err.message}`, "error");
+                            addMessage({
+                                type: "info",
+                                content: `❌ Failed to start validation: ${err.message}\n\nPlease check:\n• Server is running (npm run dev)\n• Inngest dev server is running\n• Network connection`,
+                                agentName: "System",
+                            });
+                            resetSubmitButton();
+                        }
+                        return;
+                    }
+
+                    // Disconnect existing subscription
+                    if (subscription) {
+                        subscription.close();
+                        subscription = null;
+                    }
+
+                    await startValidation(featureDescription, existingContext);
+                });
+
+            function showQuestions(questions) {
+                const questionsContainer = document.getElementById(
+                    "questions-container",
+                );
+                const questionsList = document.getElementById("questions-list");
+
+                questionsList.innerHTML = "";
+                questions.forEach((question, index) => {
+                    const questionDiv = document.createElement("div");
+                    questionDiv.className = "question-item";
+                    questionDiv.innerHTML = `
+                    <label for="answer-${index}">${question}</label>
+                    <textarea id="answer-${index}" rows="3" placeholder="Your answer..."></textarea>
+                `;
+                    questionsList.appendChild(questionDiv);
+                });
+
+                questionsContainer.style.display = "block";
+            }
+
+            function submitAnswers() {
+                const questions = document.querySelectorAll(
+                    "#questions-list .question-item",
+                );
+                const answers = {};
+
+                questions.forEach((item, index) => {
+                    const question = item.querySelector("label").textContent;
+                    const answer = item.querySelector("textarea").value;
+                    if (answer.trim()) {
+                        answers[question] = answer;
+                    }
+                });
+
+                // Send answers back to workflow
+                fetch("/api/submit-answers", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        sessionId: currentSessionId,
+                        answers: answers,
+                    }),
+                }).then(() => {
+                    document.getElementById(
+                        "questions-container",
+                    ).style.display = "none";
+                    addMessage({
+                        type: "info",
+                        content:
+                            "Answers submitted! Continuing with analysis...",
+                        agentName: "System",
+                    });
+                });
+            }
+
+            // Report Drawer Functions
+            function openReportDrawer(markdown) {
+                const drawer = document.getElementById("reportDrawer");
+                const overlay = document.getElementById("drawerOverlay");
+                const drawerContent = document.getElementById("drawerContent");
+
+                // Parse markdown to HTML
+                try {
+                    const htmlContent = marked.parse(markdown);
+                    drawerContent.innerHTML = htmlContent;
+                } catch (e) {
+                    drawerContent.innerHTML = `<pre>${markdown}</pre>`;
+                }
+
+                // Apply final-report styles to drawer content
+                drawerContent.className =
+                    "drawer-content message-content final-report";
+
+                // Open drawer
+                overlay.classList.add("active");
+                drawer.classList.add("open");
+            }
+
+            function closeReportDrawer() {
+                const drawer = document.getElementById("reportDrawer");
+                const overlay = document.getElementById("drawerOverlay");
+
+                overlay.classList.remove("active");
+                drawer.classList.remove("open");
+            }
+
+            function downloadReport() {
+                if (!reportMarkdown) {
+                    alert("No report available to download");
+                    return;
+                }
+
+                // Create a blob with the markdown content
+                const blob = new Blob([reportMarkdown], {
+                    type: "text/markdown;charset=utf-8",
+                });
+                const url = URL.createObjectURL(blob);
+
+                // Create a temporary link and trigger download
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `feature-validation-report-${Date.now()}.md`;
+                document.body.appendChild(a);
+                a.click();
+
+                // Clean up
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+
+            // Clean up on page unload
+            window.addEventListener("beforeunload", () => {
+                if (subscription) {
+                    subscription.close();
+                }
+            });
+        </script>
+    </body>
+</html>

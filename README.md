@@ -6,6 +6,8 @@ An Express.js application with TypeScript and Inngest that provides a comprehens
 
 - **Express.js + TypeScript** - Type-safe REST API server
 - **Inngest Integration** - Durable workflow execution with built-in retries
+- **Checkpointing Enabled** - Lower latency with client-side step orchestration
+- **Realtime Middleware** - Stream data from functions with publish/subscribe
 - **Multi-Provider LLM Support** - Unified interface for OpenAI, Anthropic, Gemini, Grok, and Azure OpenAI
 - **Streaming Support** - Real-time LLM response streaming across all providers
 - **Function Calling** - Built-in tool execution with pre-call and post-call hooks
@@ -40,9 +42,39 @@ src/
         └── azure-openai.ts    # Azure OpenAI provider implementation
 ```
 
+## Architecture Principles
+
+This framework follows an **Inngest-first** architecture:
+
+### Core Principles
+
+1. **All LLM calls wrapped in `step.run()`** - The `runAgent()` function automatically wraps everything
+2. **Functions orchestrated by Inngest** - Use `step.invoke()` to call between functions
+3. **Flows use Inngest primitives** - `executeTransition()` wraps `step.invoke()` and `step.sendEvent()`
+4. **Event-driven workflows** - Trigger workflows with Inngest events
+5. **Durable execution** - Automatic retries, checkpointing, and observability
+
+### Why This Matters
+
+✅ **Durability** - Functions retry automatically, workflows resume from failures  
+✅ **Low Latency** - Checkpointing executes steps immediately on client-side  
+✅ **Realtime Updates** - Stream data from functions with publish/subscribe  
+✅ **Observability** - See every step in Inngest dashboard  
+✅ **Scalability** - Functions run independently and auto-scale  
+✅ **Type Safety** - Full TypeScript support with typed return values  
+✅ **Testability** - Each function can be tested in isolation  
+
 ## Quick Start
 
-### 1. Start the Development Server
+### 1. Start Inngest Dev Server
+
+```bash
+npx inngest-cli@latest dev
+```
+
+This starts the Inngest dev server at `http://localhost:8288` for local development and testing.
+
+### 2. Start the Development Server
 
 ```bash
 npm run dev
@@ -50,7 +82,7 @@ npm run dev
 
 The server runs on `http://localhost:3000` with the Inngest endpoint at `/api/inngest`.
 
-### 2. Production Build
+### 3. Production Build
 
 ```bash
 npm run build
@@ -119,7 +151,7 @@ const messages = hydratePrompt(prompt);
 
 ### AI Agent with Tools
 
-Wrap LLM calls in Inngest steps with support for pre-call and post-call tools.
+The `runAgent()` function wraps all LLM interactions in `step.run()` automatically, ensuring durable execution within Inngest functions.
 
 ```typescript
 import { runAgent } from './ai/agent';
@@ -223,7 +255,7 @@ The agent automatically handles the function calling loop:
 
 ### Flow Orchestration
 
-Chain Inngest functions together with declarative flows supporting linear, branching, and conditional transitions.
+The flow system provides helpers to orchestrate Inngest functions using `step.invoke()` and `step.sendEvent()` with declarative transitions.
 
 #### Defining a Flow
 
@@ -417,7 +449,18 @@ npx tsc --noEmit
 
 ### Inngest Integration
 
-The application uses Inngest for durable workflow execution. The `/api/inngest` endpoint serves the Inngest functions and handles event-driven execution with built-in retries and observability.
+The application uses Inngest for durable workflow execution with enhanced features:
+
+#### Checkpointing
+Enabled globally (`checkpointing: true`) for dramatically lower latency. Steps execute immediately on the client-side instead of waiting for server round-trips. This is especially important for AI workflows where multiple LLM calls happen in sequence.
+
+#### Realtime Middleware
+The `realtimeMiddleware()` enables streaming data from functions using publish/subscribe patterns. This allows:
+- Real-time updates to clients as workflows progress
+- Streaming LLM responses through Inngest functions
+- Live status updates for long-running operations
+
+The `/api/inngest` endpoint serves the Inngest functions and handles event-driven execution with built-in retries and observability.
 
 ### Step Tools
 

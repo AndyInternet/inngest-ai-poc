@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "example:feature-validation": "tsx examples/feature-validation/cli.ts"
   },
   "keywords": [],
   "author": "",
@@ -14,10 +15,14 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
     "@google/generative-ai": "^0.21.0",
+    "@inngest/realtime": "^0.4.5",
+    "@types/ws": "^8.18.1",
+    "dotenv": "^16.4.5",
     "express": "^4.18.2",
-    "inngest": "^3.15.0",
+    "inngest": "^3.46.0",
     "mustache": "^4.2.0",
-    "openai": "^4.73.0"
+    "openai": "^4.73.0",
+    "ws": "^8.19.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
