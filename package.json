@@ -1,0 +1,29 @@
+{
+  "name": "inngest-ai-poc",
+  "version": "1.0.0",
+  "description": "Express.js app with TypeScript and Inngest",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@google/generative-ai": "^0.21.0",
+    "express": "^4.18.2",
+    "inngest": "^3.15.0",
+    "mustache": "^4.2.0",
+    "openai": "^4.73.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/mustache": "^4.2.5",
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
