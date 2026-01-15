@@ -1,104 +1,30 @@
-import type { AgentMetadata } from "./types";
+import type {
+  AgentMetadata,
+  StreamMessage,
+  StreamBroadcaster,
+  LLMResponseMessage,
+  FinalResponseMessage,
+  ToolStartMessage,
+  ToolProgressMessage,
+  ToolResultMessage,
+  ToolErrorMessage,
+  QuestionsMessage,
+} from "./types";
 
-/**
- * Types for streaming messages sent during agent execution.
- */
-
-/** Base type for all streaming messages */
-export type StreamMessageBase = {
-  timestamp: number;
-};
-
-/** LLM response streaming message */
-export type LLMResponseMessage = StreamMessageBase & {
-  type: "llm_response";
-  content: string;
-  agentName: string;
-  iteration: number;
-  streaming: boolean;
-  hasToolCalls?: boolean;
-  metadata?: AgentMetadata;
-};
-
-/** Final response message when agent completes */
-export type FinalResponseMessage = StreamMessageBase & {
-  type: "final_response";
-  content: string;
-  agentName: string;
-  iteration: number;
-  completed: boolean;
-  metadata?: AgentMetadata;
-};
-
-/** Tool execution start message */
-export type ToolStartMessage = StreamMessageBase & {
-  type: "tool_start";
-  toolName: string;
-  agentName: string;
-  iteration: number;
-  args: Record<string, unknown>;
-};
-
-/** Tool execution progress message */
-export type ToolProgressMessage = StreamMessageBase & {
-  type: "tool_progress";
-  toolName: string;
-  agentName: string;
-  iteration: number;
-  message: string;
-};
-
-/** Tool execution result message */
-export type ToolResultMessage = StreamMessageBase & {
-  type: "tool_result";
-  toolName: string;
-  agentName: string;
-  iteration: number;
-  result: unknown;
-  success: true;
-};
-
-/** Tool execution error message */
-export type ToolErrorMessage = StreamMessageBase & {
-  type: "tool_error";
-  toolName: string;
-  agentName: string;
-  iteration: number;
-  error: string;
-  success: false;
-};
-
-/** Questions message for human-in-the-loop interactions */
-export type QuestionsMessage = StreamMessageBase & {
-  type: "questions";
-  content: string;
-  questions: string[];
-  agentName: string;
-  metadata?: AgentMetadata;
-};
-
-/** Union of all streaming message types */
-export type StreamMessage =
-  | LLMResponseMessage
-  | FinalResponseMessage
-  | ToolStartMessage
-  | ToolProgressMessage
-  | ToolResultMessage
-  | ToolErrorMessage
-  | QuestionsMessage;
-
-/** Wrapper for messages with data property */
-export type StreamMessageWrapper = {
-  data: Omit<StreamMessage, "timestamp">;
-};
-
-/**
- * Broadcaster function type for sending messages to clients.
- */
-export type StreamBroadcaster = (
-  sessionId: string,
-  message: StreamMessage,
-) => void | Promise<void>;
+// Re-export types for backwards compatibility
+export type {
+  StreamMessageBase,
+  LLMResponseMessage,
+  FinalResponseMessage,
+  ToolStartMessage,
+  ToolProgressMessage,
+  ToolResultMessage,
+  ToolErrorMessage,
+  QuestionsMessage,
+  StreamMessage,
+  StreamMessageWrapper,
+  StreamBroadcaster,
+} from "./types";
 
 /**
  * Manages streaming messages for agent execution.

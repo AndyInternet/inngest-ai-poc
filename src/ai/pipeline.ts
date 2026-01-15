@@ -4,132 +4,28 @@ import type {
   PipelineContext,
   PipelineConfig,
   AgentPipeline,
-  PipelineTransition,
+  PipelineError,
+  ErrorRecoveryResult,
+  PipelineConfigWithHooks,
+  PipelineValidationResult,
+  BranchDefinition,
+  PipelineStep,
+} from "./types";
+import { isBranchDefinition } from "./types";
+
+// Re-export types for backwards compatibility
+export type {
+  PipelineError,
+  ErrorRecoveryResult,
+  PipelineHooks,
+  PipelineConfigWithHooks,
+  PipelineValidationResult,
+  BranchDefinition,
+  PipelineStep,
 } from "./types";
 
-// =============================================================================
-// Pipeline Types
-// =============================================================================
-
-/**
- * Error information passed to pipeline error handlers.
- */
-export type PipelineError = {
-  /** The error that was thrown */
-  error: Error;
-  /** Name of the agent that failed */
-  agentName: string;
-  /** Index of the agent in the pipeline */
-  agentIndex: number;
-  /** Input that was passed to the agent */
-  input: unknown;
-  /** Results from previous agents (before the failure) */
-  previousResults: Record<string, unknown>;
-};
-
-/**
- * Result of error recovery, determining how the pipeline should proceed.
- */
-export type ErrorRecoveryResult =
-  | { action: "throw" } // Re-throw the error (default behavior)
-  | { action: "skip"; result?: unknown } // Skip this agent, optionally provide a default result
-  | { action: "retry"; maxRetries?: number } // Retry the agent (not yet implemented)
-  | { action: "abort"; result: unknown }; // Abort pipeline and return this result
-
-/**
- * Lifecycle hooks for pipeline execution.
- */
-export type PipelineHooks<TInput = unknown, TOutput = unknown> = {
-  /**
-   * Called when the pipeline starts execution.
-   */
-  onPipelineStart?: (input: TInput, sessionId?: string) => void | Promise<void>;
-
-  /**
-   * Called before each agent runs.
-   */
-  onAgentStart?: (
-    agentName: string,
-    agentIndex: number,
-    input: unknown,
-    context: PipelineContext<TInput>,
-  ) => void | Promise<void>;
-
-  /**
-   * Called after each agent completes successfully.
-   */
-  onAgentEnd?: (
-    agentName: string,
-    agentIndex: number,
-    result: unknown,
-    durationMs: number,
-    context: PipelineContext<TInput>,
-  ) => void | Promise<void>;
-
-  /**
-   * Called when an agent throws an error.
-   * Return an ErrorRecoveryResult to control how the pipeline handles the error.
-   * If not provided or returns undefined, the error is re-thrown.
-   */
-  onAgentError?: (
-    error: PipelineError,
-    context: PipelineContext<TInput>,
-  ) =>
-    | ErrorRecoveryResult
-    | undefined
-    | Promise<ErrorRecoveryResult | undefined>;
-
-  /**
-   * Called when the pipeline completes successfully.
-   */
-  onPipelineEnd?: (
-    result: TOutput,
-    totalDurationMs: number,
-    context: PipelineContext<TInput>,
-  ) => void | Promise<void>;
-
-  /**
-   * Called when the pipeline fails (after error recovery, if any).
-   */
-  onPipelineError?: (
-    error: Error,
-    context: PipelineContext<TInput>,
-  ) => void | Promise<void>;
-};
-
-/**
- * Extended pipeline configuration with hooks.
- */
-export type PipelineConfigWithHooks<
-  TInput = unknown,
-  TOutput = unknown,
-> = PipelineConfig & {
-  hooks?: PipelineHooks<TInput, TOutput>;
-};
-
-/**
- * Options for conditional agent execution.
- */
-export type AgentExecutionOptions = {
-  /**
-   * Predicate to determine if this agent should run.
-   * If returns false, the agent is skipped and the previous result is passed through.
-   *
-   * @param previousOutput - Output from the previous agent
-   * @param context - Current pipeline context
-   * @returns True to run the agent, false to skip
-   */
-  shouldRun?: (
-    previousOutput: unknown,
-    context: PipelineContext<unknown>,
-  ) => boolean | Promise<boolean>;
-
-  /**
-   * Default result to use when the agent is skipped.
-   * If not provided and agent is skipped, the previous output is passed through.
-   */
-  skipResult?: unknown;
-};
+// Re-export type guards
+export { isBranchDefinition, isAgentDefinition } from "./types";
 
 // =============================================================================
 // Agent Definition
@@ -191,34 +87,123 @@ export function defineAgent<
 }
 
 // =============================================================================
-// Pipeline Validation
+// Branch Definition
 // =============================================================================
 
 /**
- * Validation result for a pipeline configuration.
+ * Create a branch definition for conditional forking in pipelines.
+ *
+ * Branches allow you to route pipeline execution to different agent sequences
+ * based on the output of previous steps. This is useful for:
+ * - Different processing paths based on classification results
+ * - A/B testing different agent strategies
+ * - Handling different input types with specialized agents
+ *
+ * @typeParam TBranchKey - String literal union of branch names
+ * @typeParam TPreviousOutput - Output type from the previous step
+ * @typeParam TBranchOutput - Output type produced by branches
+ * @typeParam TPipelineInput - Initial pipeline input type
+ * @typeParam TPipelineResults - Accumulated results type
+ *
+ * @example
+ * ```typescript
+ * const pipeline = createAgentPipeline(
+ *   { name: "classification-pipeline" },
+ *   [
+ *     defineAgent({ name: "classifier", run: classifierAgent }),
+ *
+ *     defineBranch({
+ *       name: "processing-branch",
+ *       condition: (prev) => prev.category, // "technical" | "business" | "general"
+ *       branches: {
+ *         technical: [
+ *           defineAgent({ name: "tech-analyzer", run: techAgent }),
+ *           defineAgent({ name: "tech-reporter", run: techReportAgent }),
+ *         ],
+ *         business: [
+ *           defineAgent({ name: "biz-analyzer", run: bizAgent }),
+ *           defineAgent({ name: "biz-reporter", run: bizReportAgent }),
+ *         ],
+ *         general: [
+ *           defineAgent({ name: "general-handler", run: generalAgent }),
+ *         ],
+ *       },
+ *       defaultBranch: "general",
+ *     }),
+ *
+ *     defineAgent({ name: "finalizer", run: finalizeAgent }),
+ *   ],
+ * );
+ * ```
  */
-export type PipelineValidationResult = {
-  valid: boolean;
-  errors: string[];
-  warnings: string[];
-};
+export function defineBranch<
+  TBranchKey extends string,
+  TPreviousOutput = unknown,
+  TBranchOutput = unknown,
+  TPipelineInput = unknown,
+  TPipelineResults extends Record<string, unknown> = Record<string, unknown>,
+>(
+  config: Omit<
+    BranchDefinition<
+      TBranchKey,
+      TPreviousOutput,
+      TBranchOutput,
+      TPipelineInput,
+      TPipelineResults
+    >,
+    "__type"
+  >,
+): BranchDefinition<
+  TBranchKey,
+  TPreviousOutput,
+  TBranchOutput,
+  TPipelineInput,
+  TPipelineResults
+> {
+  if (!config.name) {
+    throw new Error("Branch name is required");
+  }
+  if (!config.condition) {
+    throw new Error("Branch condition function is required");
+  }
+  if (!config.branches || Object.keys(config.branches).length === 0) {
+    throw new Error("Branch must have at least one branch defined");
+  }
+
+  // Validate that each branch has at least one step
+  for (const [key, steps] of Object.entries(config.branches)) {
+    if (!steps || (steps as unknown[]).length === 0) {
+      throw new Error(`Branch "${key}" must have at least one step`);
+    }
+  }
+
+  return {
+    __type: "branch",
+    ...config,
+  };
+}
+
+// =============================================================================
+// Pipeline Validation
+// =============================================================================
 
 /**
  * Validate a pipeline configuration for common issues.
  *
  * Checks for:
- * - Empty agent list
- * - Duplicate agent names
+ * - Empty step list
+ * - Duplicate agent/branch names
  * - Missing required fields
- * - Agents without mapInput (except first agent)
+ * - Agents without mapInput (except first step)
+ * - Branch validation (condition, branches, agents within branches)
  *
  * @param config - Pipeline configuration
- * @param agents - Array of agent definitions
+ * @param steps - Array of agent and branch definitions
  * @returns Validation result with errors and warnings
  *
  * @example
  * ```typescript
- * const result = validatePipeline(config, agents);
+ * const result = validatePipeline(config, steps);
  * if (!result.valid) {
  *   console.error("Pipeline validation failed:", result.errors);
  * }
@@ -230,7 +215,7 @@ export type PipelineValidationResult = {
 export function validatePipeline(
   config: PipelineConfig,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  agents: readonly AgentDefinition<any, any, any, any, any>[],
+  steps: readonly PipelineStep<any>[],
 ): PipelineValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -240,39 +225,127 @@ export function validatePipeline(
     errors.push("Pipeline name is required");
   }
 
-  // Check agents array
-  if (!agents || agents.length === 0) {
-    errors.push("Pipeline must have at least one agent");
+  // Check steps array
+  if (!steps || steps.length === 0) {
+    errors.push("Pipeline must have at least one step");
     return { valid: false, errors, warnings };
   }
 
-  // Check for duplicate names
+  // Check for duplicate names (including branch names and agents within branches)
   const names = new Set<string>();
-  for (let i = 0; i < agents.length; i++) {
-    const agent = agents[i];
 
+  function validateAgent(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    agent: AgentDefinition<any, any, any, any, any>,
+    path: string,
+    isFirstInSequence: boolean,
+  ): void {
     if (!agent.name || agent.name.trim() === "") {
-      errors.push(`agents[${i}]: Agent name is required`);
-      continue;
+      errors.push(`${path}: Agent name is required`);
+      return;
     }
 
     if (names.has(agent.name)) {
-      errors.push(`agents[${i}]: Duplicate agent name "${agent.name}"`);
+      errors.push(`${path}: Duplicate name "${agent.name}"`);
     } else {
       names.add(agent.name);
     }
 
     if (!agent.run) {
+      errors.push(`${path} ("${agent.name}"): Agent run function is required`);
+    }
+
+    // Warning: agent without mapInput (except first in sequence)
+    if (!isFirstInSequence && !agent.mapInput) {
+      warnings.push(
+        `${path} ("${agent.name}"): No mapInput defined. ` +
+          `Previous output will be passed directly as input.`,
+      );
+    }
+  }
+
+  function validateStep(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    pipelineStep: PipelineStep<any>,
+    path: string,
+    isFirstInSequence: boolean,
+  ): void {
+    if (isBranchDefinition(pipelineStep)) {
+      validateBranch(pipelineStep, path);
+    } else {
+      validateAgent(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pipelineStep as AgentDefinition<any, any, any, any, any>,
+        path,
+        isFirstInSequence,
+      );
+    }
+  }
+
+  function validateBranch(branch: BranchDefinition, path: string): void {
+    if (!branch.name || branch.name.trim() === "") {
+      errors.push(`${path}: Branch name is required`);
+      return;
+    }
+
+    if (names.has(branch.name)) {
+      errors.push(`${path}: Duplicate name "${branch.name}"`);
+    } else {
+      names.add(branch.name);
+    }
+
+    if (!branch.condition) {
       errors.push(
-        `agents[${i}] ("${agent.name}"): Agent run function is required`,
+        `${path} ("${branch.name}"): Branch condition function is required`,
       );
     }
 
-    // Warning: agent without mapInput (except first)
-    if (i > 0 && !agent.mapInput) {
-      warnings.push(
-        `agents[${i}] ("${agent.name}"): No mapInput defined. ` +
-          `Previous agent's output will be passed directly as input.`,
+    if (!branch.branches || Object.keys(branch.branches).length === 0) {
+      errors.push(
+        `${path} ("${branch.name}"): Branch must have at least one branch defined`,
+      );
+      return;
+    }
+
+    // Validate each branch's steps (which may include nested branches)
+    for (const [branchKey, branchSteps] of Object.entries(branch.branches)) {
+      if (!branchSteps || (branchSteps as unknown[]).length === 0) {
+        errors.push(
+          `${path} ("${branch.name}").branches["${branchKey}"]: Branch must have at least one step`,
+        );
+        continue;
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (branchSteps as PipelineStep<any>[]).forEach((branchStep, j) => {
+        validateStep(
+          branchStep,
+          `${path} ("${branch.name}").branches["${branchKey}"][${j}]`,
+          j === 0,
+        );
+      });
+    }
+
+    // Validate defaultBranch if provided
+    if (branch.defaultBranch && !branch.branches[branch.defaultBranch]) {
+      errors.push(
+        `${path} ("${branch.name}"): defaultBranch "${branch.defaultBranch}" ` +
+          `is not a valid branch key. Available: ${Object.keys(branch.branches).join(", ")}`,
+      );
+    }
+  }
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+
+    if (isBranchDefinition(step)) {
+      validateBranch(step, `steps[${i}]`);
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      validateAgent(
+        step as AgentDefinition<any, any, any, any, any>,
+        `steps[${i}]`,
+        i === 0,
       );
     }
   }
@@ -289,13 +362,253 @@ export function validatePipeline(
 // =============================================================================
 
 /**
- * Create a pipeline that executes agents in sequence.
- * Each agent's output is passed to the next agent via the mapInput function.
+ * Execute a single agent within a pipeline.
+ * Internal helper function to reduce code duplication.
+ */
+async function executeAgent(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  agent: AgentDefinition<any, any, any, any, any>,
+  step: StepTools,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  agentInput: any,
+  sessionId: string | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: PipelineContext<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  hooks: PipelineConfigWithHooks<any, any>["hooks"],
+  pipelineName: string,
+  stepIndex: number,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  lastResult: any,
+): Promise<{ result: unknown; shouldContinue: boolean }> {
+  const agentStartTime = Date.now();
+
+  // Call agent start hook
+  if (hooks?.onAgentStart) {
+    await hooks.onAgentStart(agent.name, stepIndex, agentInput, context);
+  }
+
+  // Validate input if schema is provided
+  if (agent.inputSchema) {
+    const parseResult = agent.inputSchema.safeParse(agentInput);
+    if (!parseResult.success) {
+      const errorDetails = parseResult.error.issues
+        .map(
+          (issue: { path: (string | number)[]; message: string }) =>
+            `  - ${issue.path.join(".")}: ${issue.message}`,
+        )
+        .join("\n");
+      throw new Error(
+        `Pipeline "${pipelineName}" - Agent "${agent.name}" input validation failed:\n${errorDetails}`,
+      );
+    }
+    agentInput = parseResult.data;
+  }
+
+  try {
+    // Execute the agent
+    const result = await agent.run(step, agentInput, sessionId);
+
+    // Validate output if schema is provided
+    if (agent.outputSchema) {
+      const parseResult = agent.outputSchema.safeParse(result);
+      if (!parseResult.success) {
+        const errorDetails = parseResult.error.issues
+          .map(
+            (issue: { path: (string | number)[]; message: string }) =>
+              `  - ${issue.path.join(".")}: ${issue.message}`,
+          )
+          .join("\n");
+        throw new Error(
+          `Pipeline "${pipelineName}" - Agent "${agent.name}" output validation failed:\n${errorDetails}`,
+        );
+      }
+    }
+
+    const agentDuration = Date.now() - agentStartTime;
+
+    // Call agent end hook
+    if (hooks?.onAgentEnd) {
+      await hooks.onAgentEnd(
+        agent.name,
+        stepIndex,
+        result,
+        agentDuration,
+        context,
+      );
+    }
+
+    // Store result in context
+    context.results[agent.name] = result;
+
+    return { result, shouldContinue: true };
+  } catch (error) {
+    // Handle agent error
+    const pipelineError: PipelineError = {
+      error: error as Error,
+      agentName: agent.name,
+      agentIndex: stepIndex,
+      input: agentInput,
+      previousResults: { ...context.results },
+    };
+
+    // Check for error recovery
+    let recovery: ErrorRecoveryResult | undefined;
+    if (hooks?.onAgentError) {
+      recovery = await hooks.onAgentError(pipelineError, context);
+    }
+
+    if (!recovery || recovery.action === "throw") {
+      throw error;
+    }
+
+    if (recovery.action === "skip") {
+      const skipResult = recovery.result ?? lastResult;
+      context.results[agent.name] = skipResult;
+      return { result: skipResult, shouldContinue: true };
+    }
+
+    if (recovery.action === "abort") {
+      return { result: recovery.result, shouldContinue: false };
+    }
+
+    // 'retry' action not yet implemented
+    throw error;
+  }
+}
+
+/**
+ * Execute a branch within a pipeline.
+ * Internal helper function for branch execution.
+ * Supports nested branches through recursive calls.
+ */
+async function executeBranch(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  branch: BranchDefinition<any, any, any, any, any>,
+  step: StepTools,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  previousOutput: any,
+  sessionId: string | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: PipelineContext<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  hooks: PipelineConfigWithHooks<any, any>["hooks"],
+  pipelineName: string,
+  stepIndex: number,
+): Promise<{ result: unknown; shouldContinue: boolean }> {
+  // Determine which branch to execute
+  const branchKey = await branch.condition(previousOutput, context);
+
+  // Get the steps for this branch
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let branchSteps = branch.branches[branchKey] as
+    | readonly PipelineStep<any>[]
+    | undefined;
+
+  // Use default branch if key not found
+  if (!branchSteps && branch.defaultBranch) {
+    branchSteps = branch.branches[branch.defaultBranch];
+  }
+
+  if (!branchSteps) {
+    throw new Error(
+      `Pipeline "${pipelineName}" - Branch "${branch.name}" returned unknown key "${branchKey}" ` +
+        `and no defaultBranch is defined. Available branches: ${Object.keys(branch.branches).join(", ")}`,
+    );
+  }
+
+  // Transform input if mapInput is provided
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let branchInput: any = previousOutput;
+  if (branch.mapInput) {
+    branchInput = branch.mapInput(previousOutput, context);
+  }
+
+  // Execute the branch steps in sequence
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let lastBranchResult: any = branchInput;
+
+  for (let j = 0; j < branchSteps.length; j++) {
+    const branchStep = branchSteps[j];
+
+    if (isBranchDefinition(branchStep)) {
+      // Recursively execute nested branch
+      const { result, shouldContinue } = await executeBranch(
+        branchStep,
+        step,
+        lastBranchResult,
+        sessionId,
+        context,
+        hooks,
+        pipelineName,
+        stepIndex,
+      );
+
+      if (!shouldContinue) {
+        return { result, shouldContinue: false };
+      }
+
+      lastBranchResult = result;
+    } else {
+      // Execute agent
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const agent = branchStep as AgentDefinition<any, any, any, any, any>;
+
+      // Check if agent should run
+      if (agent.shouldRun) {
+        const shouldExecute = await agent.shouldRun(lastBranchResult, context);
+        if (!shouldExecute) {
+          const skipResult = agent.skipResult ?? lastBranchResult;
+          context.results[agent.name] = skipResult;
+          lastBranchResult = skipResult;
+          continue;
+        }
+      }
+
+      // Determine input for this agent
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let agentInput: any;
+      if (agent.mapInput) {
+        agentInput = agent.mapInput(lastBranchResult, context);
+      } else {
+        agentInput = lastBranchResult;
+      }
+
+      const { result, shouldContinue } = await executeAgent(
+        agent,
+        step,
+        agentInput,
+        sessionId,
+        context,
+        hooks,
+        pipelineName,
+        stepIndex,
+        lastBranchResult,
+      );
+
+      if (!shouldContinue) {
+        return { result, shouldContinue: false };
+      }
+
+      lastBranchResult = result;
+    }
+  }
+
+  // Store the branch result with the branch name
+  context.results[branch.name] = lastBranchResult;
+
+  return { result: lastBranchResult, shouldContinue: true };
+}
+
+/**
+ * Create a pipeline that executes agents and branches in sequence.
+ * Each step's output is passed to the next step via the mapInput function.
  *
  * ## Features
  *
- * - **Sequential execution**: Agents run one after another
- * - **Context accumulation**: Each agent can access results from all previous agents
+ * - **Sequential execution**: Steps run one after another
+ * - **Conditional branching**: Route to different agent sequences based on results
+ * - **Context accumulation**: Each step can access results from all previous steps
  * - **Schema validation**: Optional Zod schemas for input/output validation
  * - **Lifecycle hooks**: Monitor pipeline execution with callbacks
  * - **Error recovery**: Handle agent failures gracefully
@@ -303,48 +616,58 @@ export function validatePipeline(
  * ## Execution Flow
  *
  * 1. `onPipelineStart` hook is called
- * 2. For each agent:
- *    a. `shouldRun` predicate is checked (if provided)
- *    b. `onAgentStart` hook is called
- *    c. `mapInput` transforms previous output to agent input
- *    d. Input schema validation (if provided)
- *    e. Agent `run` function executes
- *    f. Output schema validation (if provided)
- *    g. `onAgentEnd` hook is called
- *    h. Result is stored in context
+ * 2. For each step (agent or branch):
+ *    - **Agent**: Executes the agent function
+ *    - **Branch**: Evaluates condition, executes selected branch's agents
  * 3. `onPipelineEnd` hook is called with final result
  *
  * @example
  * ```typescript
+ * // Simple sequential pipeline
  * const pipeline = createAgentPipeline(
- *   {
- *     name: "feature-validation",
- *     description: "Validate a feature request",
- *     hooks: {
- *       onAgentStart: (name, index) => console.log(`Starting ${name}`),
- *       onAgentEnd: (name, index, result, ms) => console.log(`${name} done in ${ms}ms`),
- *       onAgentError: (error) => {
- *         console.error(`Agent ${error.agentName} failed:`, error.error);
- *         return { action: "skip", result: null }; // Skip failed agent
- *       },
- *     },
- *   },
+ *   { name: "feature-validation" },
  *   [
- *     defineAgent({ name: "gather-context", run: gatherContextAgent, ... }),
- *     defineAgent({ name: "analyze-feature", run: analyzeFeatureAgent, ... }),
- *     defineAgent({ name: "generate-report", run: generateReportAgent, ... }),
+ *     defineAgent({ name: "gather-context", run: gatherContextAgent }),
+ *     defineAgent({ name: "analyze-feature", run: analyzeFeatureAgent }),
+ *     defineAgent({ name: "generate-report", run: generateReportAgent }),
  *   ],
  * );
  *
- * const result = await pipeline.run(step, { featureDescription }, sessionId);
+ * // Pipeline with conditional branching
+ * const branchingPipeline = createAgentPipeline(
+ *   { name: "classification-pipeline" },
+ *   [
+ *     defineAgent({ name: "classifier", run: classifierAgent }),
+ *
+ *     defineBranch({
+ *       name: "processing",
+ *       condition: (prev) => prev.category,
+ *       branches: {
+ *         technical: [defineAgent({ name: "tech-handler", run: techAgent })],
+ *         business: [defineAgent({ name: "biz-handler", run: bizAgent })],
+ *       },
+ *       defaultBranch: "technical",
+ *     }),
+ *
+ *     defineAgent({ name: "finalizer", run: finalizeAgent }),
+ *   ],
+ * );
  * ```
  */
 export function createAgentPipeline<TInput, TOutput>(
   config: PipelineConfigWithHooks<TInput, TOutput>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  agents: readonly (AgentDefinition<any, any, any, TInput, any> &
-    AgentExecutionOptions)[],
+  steps: readonly PipelineStep<TInput>[],
 ): AgentPipeline<TInput, TOutput> {
+  // Extract just agents for backwards compatibility with the agents property
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const agents: AgentDefinition<any, any, any, TInput, any>[] = [];
+  for (const s of steps) {
+    if (!isBranchDefinition(s)) {
+      agents.push(s);
+    }
+  }
+
   return {
     config,
     agents,
@@ -371,118 +694,77 @@ export function createAgentPipeline<TInput, TOutput>(
       let lastResult: any = input;
 
       try {
-        for (let i = 0; i < agents.length; i++) {
-          const agent = agents[i];
-          const agentStartTime = Date.now();
+        for (let i = 0; i < steps.length; i++) {
+          const pipelineStep = steps[i];
 
-          // Check if agent should run
-          if (agent.shouldRun) {
-            const shouldExecute = await agent.shouldRun(lastResult, context);
-            if (!shouldExecute) {
-              // Skip this agent
-              const skipResult = agent.skipResult ?? lastResult;
-              context.results[agent.name] = skipResult;
-              lastResult = skipResult;
-              continue;
+          if (isBranchDefinition(pipelineStep)) {
+            // Execute branch
+            const { result, shouldContinue } = await executeBranch(
+              pipelineStep,
+              step,
+              lastResult,
+              sessionId,
+              context,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              hooks as any,
+              config.name,
+              i,
+            );
+
+            if (!shouldContinue) {
+              return result as TOutput;
             }
-          }
 
-          // Determine input for this agent
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let agentInput: any;
-          if (agent.mapInput) {
-            agentInput = agent.mapInput(lastResult, context);
+            lastResult = result;
           } else {
-            agentInput = lastResult;
-          }
+            // Execute agent - cast to proper type after type guard check
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const agent = pipelineStep as AgentDefinition<
+              any,
+              any,
+              any,
+              TInput,
+              any
+            >;
 
-          // Call agent start hook
-          if (hooks?.onAgentStart) {
-            await hooks.onAgentStart(agent.name, i, agentInput, context);
-          }
-
-          // Validate input if schema is provided
-          if (agent.inputSchema) {
-            const parseResult = agent.inputSchema.safeParse(agentInput);
-            if (!parseResult.success) {
-              const errorDetails = parseResult.error.issues
-                .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
-                .join("\n");
-              throw new Error(
-                `Pipeline "${config.name}" - Agent "${agent.name}" input validation failed:\n${errorDetails}`,
-              );
-            }
-            agentInput = parseResult.data;
-          }
-
-          try {
-            // Execute the agent
-            const result = await agent.run(step, agentInput, sessionId);
-
-            // Validate output if schema is provided
-            if (agent.outputSchema) {
-              const parseResult = agent.outputSchema.safeParse(result);
-              if (!parseResult.success) {
-                const errorDetails = parseResult.error.issues
-                  .map(
-                    (issue) => `  - ${issue.path.join(".")}: ${issue.message}`,
-                  )
-                  .join("\n");
-                throw new Error(
-                  `Pipeline "${config.name}" - Agent "${agent.name}" output validation failed:\n${errorDetails}`,
-                );
+            // Check if agent should run
+            if (agent.shouldRun) {
+              const shouldExecute = await agent.shouldRun(lastResult, context);
+              if (!shouldExecute) {
+                const skipResult = agent.skipResult ?? lastResult;
+                context.results[agent.name] = skipResult;
+                lastResult = skipResult;
+                continue;
               }
             }
 
-            const agentDuration = Date.now() - agentStartTime;
-
-            // Call agent end hook
-            if (hooks?.onAgentEnd) {
-              await hooks.onAgentEnd(
-                agent.name,
-                i,
-                result,
-                agentDuration,
-                context,
-              );
+            // Determine input for this agent
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            let agentInput: any;
+            if (agent.mapInput) {
+              agentInput = agent.mapInput(lastResult, context);
+            } else {
+              agentInput = lastResult;
             }
 
-            // Store result in context
-            context.results[agent.name] = result;
+            const { result, shouldContinue } = await executeAgent(
+              agent,
+              step,
+              agentInput,
+              sessionId,
+              context,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              hooks as any,
+              config.name,
+              i,
+              lastResult,
+            );
+
+            if (!shouldContinue) {
+              return result as TOutput;
+            }
+
             lastResult = result;
-          } catch (error) {
-            // Handle agent error
-            const pipelineError: PipelineError = {
-              error: error as Error,
-              agentName: agent.name,
-              agentIndex: i,
-              input: agentInput,
-              previousResults: { ...context.results },
-            };
-
-            // Check for error recovery
-            let recovery: ErrorRecoveryResult | undefined;
-            if (hooks?.onAgentError) {
-              recovery = await hooks.onAgentError(pipelineError, context);
-            }
-
-            if (!recovery || recovery.action === "throw") {
-              throw error;
-            }
-
-            if (recovery.action === "skip") {
-              const skipResult = recovery.result ?? lastResult;
-              context.results[agent.name] = skipResult;
-              lastResult = skipResult;
-              continue;
-            }
-
-            if (recovery.action === "abort") {
-              return recovery.result as TOutput;
-            }
-
-            // 'retry' action not yet implemented
-            throw error;
           }
         }
 
@@ -589,194 +871,6 @@ export async function runAgentsInParallel<
   );
 
   return results as TResults;
-}
-
-// =============================================================================
-// Pipeline Transition Helpers
-// =============================================================================
-
-/**
- * Create a linear transition to a single target.
- * The result is passed to the target function/event.
- *
- * @param to - The target agent/function name
- *
- * @example
- * ```typescript
- * const transition = linearTransition("process-results");
- * await executeTransition(step, transition, result, functionRefs);
- * ```
- */
-export function linearTransition(to: string): PipelineTransition<unknown> {
-  return { type: "linear", to };
-}
-
-/**
- * Create a fan-out transition to multiple targets in parallel.
- * The same result is passed to all target functions/events.
- *
- * @param to - Array of target agent/function names
- *
- * @example
- * ```typescript
- * const transition = fanOutTransition([
- *   "send-notification",
- *   "update-database",
- *   "log-analytics",
- * ]);
- * await executeTransition(step, transition, result, functionRefs);
- * ```
- */
-export function fanOutTransition(to: string[]): PipelineTransition<unknown> {
-  return { type: "branch", to };
-}
-
-/**
- * Create a conditional transition that routes based on the result.
- * Conditions are evaluated in order; first matching condition wins.
- *
- * @typeParam TResult - The type of result to evaluate conditions against
- * @param branches - Array of condition/target pairs, evaluated in order
- * @param defaultTo - Optional default target if no conditions match
- *
- * @example
- * ```typescript
- * const transition = conditionalTransition<AnalysisResult>(
- *   [
- *     { condition: (r) => r.score > 80, to: "high-priority-handler" },
- *     { condition: (r) => r.score > 50, to: "medium-priority-handler" },
- *     { condition: (r) => r.needsReview, to: "manual-review" },
- *   ],
- *   "low-priority-handler", // default if no conditions match
- * );
- * ```
- */
-export function conditionalTransition<TResult = unknown>(
-  branches: Array<{ condition: (result: TResult) => boolean; to: string }>,
-  defaultTo?: string,
-): PipelineTransition<TResult> {
-  return {
-    type: "conditional",
-    branches,
-    default: defaultTo,
-  };
-}
-
-/**
- * Execute a pipeline transition by invoking Inngest functions or sending events.
- * This should be called at the end of an Inngest function to continue the pipeline.
- *
- * ## Behavior
- *
- * - If the target is found in `functionRefs`, uses `step.invoke()` for direct invocation
- * - If the target is not found, uses `step.sendEvent()` to emit an event
- * - For branch transitions, all targets are executed (sequentially for invokes)
- * - For conditional transitions, first matching condition determines the target
- *
- * @typeParam TResult - The type of result being passed to the next step
- * @param step - Inngest step tools
- * @param transition - The transition to execute (or undefined to skip)
- * @param result - The result to pass to the next step
- * @param functionRefs - Map of function names to Inngest function references
- * @returns The result from the invoked function, or null for events
- *
- * @example
- * ```typescript
- * // At the end of an Inngest function:
- * const functionRefs = new Map([
- *   ["process-results", processResultsFn],
- *   ["send-notification", sendNotificationFn],
- * ]);
- *
- * const transition = conditionalTransition<MyResult>([
- *   { condition: (r) => r.success, to: "process-results" },
- *   { condition: (r) => !r.success, to: "handle-failure" },
- * ]);
- *
- * await executeTransition(step, transition, result, functionRefs);
- * ```
- */
-export async function executeTransition<TResult = unknown>(
-  step: StepTools,
-  transition: PipelineTransition<TResult> | undefined,
-  result: TResult,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  functionRefs: Map<string, any>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<any> {
-  if (!transition) return null;
-
-  switch (transition.type) {
-    case "linear": {
-      const targetRef = functionRefs.get(transition.to);
-      if (targetRef) {
-        return await step.invoke(`invoke-${transition.to}`, {
-          function: targetRef,
-          data: result,
-        });
-      } else {
-        await step.sendEvent(`send-event-${transition.to}`, {
-          name: transition.to,
-          data: result,
-        });
-        return null;
-      }
-    }
-    case "branch": {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const results: any[] = [];
-      for (const target of transition.to) {
-        const targetRef = functionRefs.get(target);
-        if (targetRef) {
-          const branchResult = await step.invoke(`invoke-${target}`, {
-            function: targetRef,
-            data: result,
-          });
-          results.push(branchResult);
-        } else {
-          await step.sendEvent(`send-event-${target}`, {
-            name: target,
-            data: result,
-          });
-        }
-      }
-      return results.length > 0 ? results : null;
-    }
-    case "conditional": {
-      for (const branch of transition.branches) {
-        if (branch.condition(result)) {
-          const targetRef = functionRefs.get(branch.to);
-          if (targetRef) {
-            return await step.invoke(`invoke-${branch.to}`, {
-              function: targetRef,
-              data: result,
-            });
-          } else {
-            await step.sendEvent(`send-event-${branch.to}`, {
-              name: branch.to,
-              data: result,
-            });
-            return null;
-          }
-        }
-      }
-      if (transition.default) {
-        const targetRef = functionRefs.get(transition.default);
-        if (targetRef) {
-          return await step.invoke(`invoke-${transition.default}`, {
-            function: targetRef,
-            data: result,
-          });
-        } else {
-          await step.sendEvent(`send-event-${transition.default}`, {
-            name: transition.default,
-            data: result,
-          });
-        }
-      }
-      return null;
-    }
-  }
 }
 
 // =============================================================================

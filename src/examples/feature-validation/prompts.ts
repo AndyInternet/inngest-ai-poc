@@ -11,11 +11,11 @@ import type { Prompt } from "../../ai/types";
 import type { AnalyzeFeatureResult } from "./schemas";
 
 // ============================================================================
-// Gather Context Agent Prompts
+// Evaluate Context Agent Prompt
 // ============================================================================
 
 /**
- * Prompt for the gather-context agent.
+ * Prompt for the evaluate-context agent.
  *
  * This agent uses Chain-of-Thought reasoning to determine if enough
  * context exists to evaluate a feature request. If not, it generates
@@ -25,7 +25,7 @@ import type { AnalyzeFeatureResult } from "./schemas";
  * @param existingContext - Any context already gathered
  * @returns Prompt object ready for hydration
  */
-export function gatherContextPrompt(
+export function evaluateContextPrompt(
   featureDescription: string,
   existingContext: string,
 ): Prompt {
@@ -53,10 +53,10 @@ Respond in JSON format:
   "reasoning": "Your chain-of-thought analysis of available context",
   "hasEnoughContext": true or false,
   "questions": ["question1", "question2"],
-  "summary": "Brief summary of context if hasEnoughContext is true"
+  "contextSummary": "Brief summary of context if hasEnoughContext is true"
 }
 
-Note: Only include "questions" if hasEnoughContext is false.`,
+Note: Only include "questions" if hasEnoughContext is false. Only include "contextSummary" if hasEnoughContext is true.`,
       },
       {
         role: "user",
@@ -66,50 +66,6 @@ Note: Only include "questions" if hasEnoughContext is false.`,
     variables: {
       featureDescription,
       existingContext: existingContext || "None yet",
-    },
-  };
-}
-
-/**
- * Prompt for the second pass of gather-context (after questions answered).
- *
- * This prompt instructs the agent to proceed without asking more questions,
- * working with whatever context is available.
- *
- * @param featureDescription - The feature being evaluated
- * @param existingContext - All context including user answers
- * @returns Prompt object ready for hydration
- */
-export function gatherContextFinalPrompt(
-  featureDescription: string,
-  existingContext: string,
-): Prompt {
-  return {
-    messages: [
-      {
-        role: "system",
-        content: `You are a product strategy advisor. You have gathered context about a feature request.
-
-Context gathered:
-{{existingContext}}
-
-Based on this context, provide your analysis. Do NOT ask any more questions - work with what you have. If information is incomplete, note what's missing in your reasoning.
-
-Respond in JSON format:
-{
-  "reasoning": "Your analysis of the context gathered",
-  "hasEnoughContext": true,
-  "summary": "Brief summary of the context you have"
-}`,
-      },
-      {
-        role: "user",
-        content: `Feature to evaluate: {{featureDescription}}`,
-      },
-    ],
-    variables: {
-      featureDescription,
-      existingContext,
     },
   };
 }

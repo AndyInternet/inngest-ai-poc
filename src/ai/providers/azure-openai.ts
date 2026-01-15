@@ -1,29 +1,15 @@
 import { AzureOpenAI } from "openai";
 import type OpenAI from "openai";
-import type { ProviderConfig } from "../types";
+import type { AzureOpenAIProviderConfig } from "../types";
 import { OpenAICompatibleProvider } from "./openai-base";
+
+// Re-export type for backwards compatibility
+export type { AzureOpenAIProviderConfig } from "../types";
 
 /**
  * Default Azure OpenAI API version.
  */
 const AZURE_DEFAULT_API_VERSION = "2024-02-15-preview";
-
-/**
- * Extended provider configuration for Azure OpenAI.
- */
-export type AzureOpenAIProviderConfig = ProviderConfig & {
-  /**
-   * Azure OpenAI deployment name.
-   * This is the name you gave your model deployment in Azure.
-   */
-  deployment?: string;
-
-  /**
-   * Azure OpenAI API version.
-   * @default "2024-02-15-preview"
-   */
-  apiVersion?: string;
-};
 
 /**
  * Azure OpenAI LLM provider.

@@ -153,25 +153,10 @@ export class ToolValidationError extends Error {
   }
 }
 
-/**
- * Validation options for validateTools.
- */
-export type ValidateToolsOptions = {
-  /**
-   * If true, throws an error when validation fails.
-   * If false, returns validation result without throwing.
-   * @default true
-   */
-  throwOnError?: boolean;
-};
+// Re-export types for backwards compatibility
+export type { ValidateToolsOptions, ValidateToolsResult } from "./types";
 
-/**
- * Result of tool validation.
- */
-export type ValidateToolsResult = {
-  valid: boolean;
-  errors: string[];
-};
+import type { ValidateToolsOptions, ValidateToolsResult } from "./types";
 
 /**
  * Validate an array of tools for common issues.

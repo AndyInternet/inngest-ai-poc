@@ -1,67 +1,7 @@
-import type { StepTools, AskUserOptions } from "./types";
+import type { StepTools, AskUserExtendedOptions, AskUserResult } from "./types";
 
-/**
- * Extended options for askUser with callbacks.
- */
-export type AskUserExtendedOptions = AskUserOptions & {
-  /**
-   * Callback invoked when questions are ready to be displayed to the user.
-   * Use this to notify your UI layer that questions need to be shown.
-   *
-   * This is called BEFORE waiting for the answer event, allowing you to
-   * trigger UI updates, send WebSocket messages, etc.
-   *
-   * @param questions - The array of questions to display
-   * @param sessionId - The session ID for this interaction
-   *
-   * @example
-   * ```typescript
-   * onQuestionsReady: async (questions, sessionId) => {
-   *   await broadcastToSession(sessionId, {
-   *     type: "questions",
-   *     questions,
-   *   });
-   * }
-   * ```
-   */
-  onQuestionsReady?: (
-    questions: string[],
-    sessionId: string,
-  ) => void | Promise<void>;
-
-  /**
-   * If true, validates that answers were provided for all questions.
-   * Missing answers will be set to empty strings in the result.
-   * @default false
-   */
-  requireAllAnswers?: boolean;
-};
-
-/**
- * Result from askUser with metadata about the answers.
- */
-export type AskUserResult = {
-  /**
-   * The answers keyed by question text.
-   * Questions without answers will have empty string values.
-   */
-  answers: Record<string, string>;
-
-  /**
-   * Whether all questions received answers.
-   */
-  complete: boolean;
-
-  /**
-   * Questions that did not receive answers (empty or missing).
-   */
-  unanswered: string[];
-
-  /**
-   * The original questions that were asked.
-   */
-  questions: string[];
-};
+// Re-export types for backwards compatibility
+export type { AskUserExtendedOptions, AskUserResult } from "./types";
 
 /**
  * Helper function to ask user questions and wait for answers.

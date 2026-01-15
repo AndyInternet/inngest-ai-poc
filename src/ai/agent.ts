@@ -1,3 +1,4 @@
+import type { ZodType } from "zod";
 import type {
   Prompt,
   LLMProvider,
@@ -12,6 +13,8 @@ import type {
   AgentContext,
   AgentHooks,
   ToolCallResponse,
+  StreamMessage,
+  RunAgentParams,
 } from "./types";
 import { isPreCallTool, isPostCallTool, toFunctionSchema } from "./tools";
 import {
@@ -24,7 +27,9 @@ import {
   createToolErrorMessage,
 } from "./streaming";
 import { AgentMetricsCollector } from "./metrics";
-import type { ZodType } from "zod";
+
+// Re-export type for backwards compatibility
+export type { RunAgentParams } from "./types";
 
 // Re-export the underlying Map for backward compatibility with code that uses .get(), .set(), .has()
 // This is a workaround - new code should use globalStreamingManager methods instead
@@ -55,57 +60,10 @@ globalStreamingManager.setBroadcaster((sessionId, message) => {
 
 export { streamingMessagesMap as streamingMessages };
 
-// Import StreamMessage type for the map
-import type { StreamMessage } from "./streaming";
-
 /**
  * Default maximum number of tool-calling iterations.
  */
 const DEFAULT_MAX_ITERATIONS = 10;
-
-/**
- * Parameters for running an agent.
- */
-export type RunAgentParams<TResult> = {
-  /** Inngest step tools for durable execution */
-  step: StepTools;
-  /** Unique name for the agent */
-  name: string;
-  /** LLM provider to use */
-  provider: LLMProvider;
-  /** Prompt configuration with messages and variables */
-  prompt: Prompt;
-  /** LLM configuration (model, temperature, etc.) */
-  config: LLMConfig;
-  /** Optional tools the agent can use */
-  tools?: Tool[];
-  /** Function to process the LLM response into the result type */
-  fn: (response: string) => TResult | Promise<TResult>;
-  /** Optional streaming configuration */
-  streaming?: StreamingConfig;
-  /** Optional metadata to include in streaming messages */
-  metadata?: AgentMetadata;
-  /**
-   * Optional Zod schema for validating and typing the result.
-   * When provided, the result from `fn` will be validated against this schema.
-   * If validation fails, an error will be thrown with details about what failed.
-   */
-  resultSchema?: ZodType<TResult>;
-  /**
-   * Lifecycle hooks for monitoring, logging, and custom behavior.
-   */
-  hooks?: AgentHooks<TResult>;
-  /**
-   * Maximum number of tool-calling iterations before throwing an error.
-   * @default 10
-   */
-  maxIterations?: number;
-  /**
-   * Optional run ID for deterministic step naming.
-   * If not provided, a random ID will be generated.
-   */
-  runId?: string;
-};
 
 /**
  * Internal message type that includes tool execution metadata.

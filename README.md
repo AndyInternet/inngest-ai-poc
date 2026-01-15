@@ -113,21 +113,134 @@ await inngest.send({
 
 ### Agents
 
-An agent is a single LLM interaction wrapped in Inngest steps for durability:
+An agent is a single LLM interaction wrapped in Inngest steps for durability. The `runAgent()` function handles retries, tool calling loops, streaming, and validation automatically.
 
 ```typescript
 const result = await runAgent({
-  step,              // Inngest step tools
-  name: "analyzer",  // Agent name
-  provider,          // LLM provider
-  prompt,            // Templated prompt
-  config,            // Model settings
-  tools,             // Optional tools
-  fn: (r) => r,      // Response transformer
-  maxIterations: 10, // Max tool-calling iterations
-  hooks: {           // Lifecycle hooks
-    onStart: (ctx) => console.log("Started"),
-    onComplete: (ctx, result, metrics) => console.log("Done"),
+  // Required parameters
+  step,                    // Inngest step tools for durability
+  name: "analyzer",        // Unique agent name (used for step naming)
+  provider,                // LLM provider instance
+  prompt,                  // Templated prompt with variables
+  config,                  // Model configuration
+  fn: (response) => response, // Transform raw LLM response to result type
+
+  // Optional parameters
+  tools,                   // Pre-call and post-call tools
+  streaming,               // Real-time streaming configuration
+  metadata,                // UI display metadata
+  resultSchema,            // Zod schema for result validation
+  hooks,                   // Lifecycle hooks for observability
+  maxIterations,           // Max tool-calling loop iterations (default: 10)
+  runId,                   // Deterministic run ID for step naming
+});
+```
+
+#### Agent Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `step` | `StepTools` | Yes | Inngest step tools that provide durability. Each LLM call and tool execution is wrapped in a step for automatic retries and checkpointing. |
+| `name` | `string` | Yes | Unique identifier for the agent. Used for step naming, logging, and streaming messages. |
+| `provider` | `LLMProvider` | Yes | LLM provider instance created via `createLLMClient()`. Supports OpenAI, Anthropic, Gemini, Grok, and Azure OpenAI. |
+| `prompt` | `Prompt` | Yes | Prompt object containing `messages` array and `variables` object. Uses Mustache templating (`{{variable}}`). |
+| `config` | `LLMConfig` | Yes | Model configuration including `model`, `temperature`, `maxTokens`, and `topP`. |
+| `fn` | `(response: string) => T` | Yes | Transform function that converts the raw LLM string response into your desired result type. Handle JSON parsing and markdown code blocks here. |
+| `tools` | `Tool[]` | No | Array of pre-call and post-call tools. Pre-call tools run before the LLM call to populate prompt variables. Post-call tools can be invoked by the LLM during execution. |
+| `streaming` | `StreamingConfig` | No | Enable real-time streaming. Requires `sessionId`. Optional `onChunk`, `onComplete` callbacks and `interval` (ms). |
+| `metadata` | `AgentMetadata` | No | UI display metadata including `workflowStep`, `displayName`, `icon`, and `description`. Passed to streaming messages and hooks. |
+| `resultSchema` | `ZodType<T>` | No | Zod schema to validate the transformed result. Throws if validation fails. |
+| `hooks` | `AgentHooks<T>` | No | Lifecycle hooks for observability: `onStart`, `onLLMStart`, `onLLMEnd`, `onToolStart`, `onToolEnd`, `onToolError`, `onComplete`, `onError`. |
+| `maxIterations` | `number` | No | Maximum iterations for tool-calling loops (default: 10). Prevents infinite loops when LLM keeps calling tools. |
+| `runId` | `string` | No | Deterministic run ID for step naming. If not provided, a unique ID is generated. Use this when you need reproducible step names. |
+
+#### Metadata
+
+The `metadata` parameter provides context for UI display and tracking:
+
+```typescript
+const result = await runAgent({
+  // ...required params
+  metadata: {
+    workflowStep: "analysis",      // Pipeline stage identifier
+    displayName: "Feature Analysis", // Human-readable name for UI
+    icon: "chart",                 // Icon identifier for UI
+    description: "Evaluating feasibility and impact", // Status description
+  },
+});
+```
+
+Metadata is included in streaming messages and passed to lifecycle hooks, making it useful for building real-time dashboards and progress indicators.
+
+#### Streaming Configuration
+
+Enable real-time streaming to send LLM responses to clients as they're generated:
+
+```typescript
+const result = await runAgent({
+  // ...required params
+  streaming: {
+    sessionId: "user-123",         // Required: identifies the client session
+    onChunk: (chunk, full) => {},  // Optional: called for each chunk
+    onComplete: (result) => {},    // Optional: called when complete
+    interval: 50,                  // Optional: broadcast interval in ms
+  },
+});
+```
+
+#### Complete Example
+
+```typescript
+import { runAgent } from "./ai/agent";
+import { createLLMClient } from "./ai/providers";
+import { z } from "zod";
+
+const ResultSchema = z.object({
+  score: z.number(),
+  recommendation: z.string(),
+});
+
+const provider = await createLLMClient({
+  type: "anthropic",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
+const result = await runAgent({
+  step,
+  name: "feature-scorer",
+  provider,
+  prompt: {
+    messages: [
+      { role: "system", content: "Score features from 1-10. Respond in JSON." },
+      { role: "user", content: "Evaluate: {{feature}}" },
+    ],
+    variables: { feature: "Dark mode support" },
+  },
+  config: {
+    model: "claude-haiku-4-5-20251001",
+    temperature: 0.7,
+    maxTokens: 1000,
+  },
+  metadata: {
+    workflowStep: "scoring",
+    displayName: "Feature Scoring",
+    icon: "star",
+    description: "Scoring the feature request",
+  },
+  resultSchema: ResultSchema,
+  streaming: sessionId ? { sessionId } : undefined,
+  hooks: {
+    onComplete: (ctx, result, metrics) => {
+      console.log(`${ctx.name} completed in ${metrics.totalDurationMs}ms`);
+    },
+  },
+  fn: (response) => {
+    // Handle markdown code blocks in JSON responses
+    let clean = response.trim();
+    if (clean.startsWith("```json")) {
+      clean = clean.replace(/^```json\s*\n?/, "").replace(/\n?```\s*$/, "");
+    }
+    return JSON.parse(clean);
   },
 });
 ```
@@ -280,48 +393,103 @@ const report = {
 };
 ```
 
-#### Pipeline Transitions (Advanced)
+#### Conditional Branching
 
-Transitions are for triggering *separate Inngest functions* at the end of a workflow. Unlike `runAgentsInParallel`, transitions are fire-and-forget - the current workflow exits and new independent workflows begin. Use this for event-driven architectures where workflows chain together.
+Route pipeline execution to different agent sequences based on results. Use `defineBranch` to create fork points where different paths can be taken:
 
 ```typescript
-import {
-  linearTransition,
-  fanOutTransition,
-  conditionalTransition,
-  executeTransition,
-} from "./ai/pipeline";
+import { createAgentPipeline, defineAgent, defineBranch } from "./ai/pipeline";
 
-// Linear: trigger a single follow-up workflow
-const linear = linearTransition("send-notification");
-
-// Fan-out: trigger multiple independent workflows (fire-and-forget)
-// Each runs as its own Inngest function - we don't wait for results
-const fanOut = fanOutTransition([
-  "notify-slack",    // Runs independently
-  "send-email",      // Runs independently  
-  "update-analytics" // Runs independently
-]);
-
-// Conditional: route to different workflows based on result
-const conditional = conditionalTransition<AnalysisResult>(
+const pipeline = createAgentPipeline(
+  { name: "support-routing" },
   [
-    { condition: (r) => r.priority === "critical", to: "escalate-to-oncall" },
-    { condition: (r) => r.priority === "high", to: "create-ticket" },
-    { condition: (r) => r.needsReview, to: "queue-for-review" },
+    // First, classify the request
+    defineAgent({
+      name: "classifier",
+      run: classifierAgent,
+    }),
+
+    // Branch based on classification result
+    defineBranch({
+      name: "handler-branch",
+      condition: (prev) => prev.category, // Returns "technical" | "billing" | "general"
+      branches: {
+        technical: [
+          defineAgent({ name: "tech-lookup", run: techLookupAgent }),
+          defineAgent({ name: "tech-response", run: techResponseAgent }),
+        ],
+        billing: [
+          defineAgent({ name: "billing-lookup", run: billingLookupAgent }),
+          defineAgent({ name: "billing-response", run: billingResponseAgent }),
+        ],
+        general: [
+          defineAgent({ name: "general-response", run: generalResponseAgent }),
+        ],
+      },
+      defaultBranch: "general", // Fallback if condition returns unknown key
+    }),
+
+    // Continue after branch converges
+    defineAgent({
+      name: "finalizer",
+      run: finalizerAgent,
+    }),
   ],
-  "archive", // default if no conditions match
 );
 
-// Execute at the end of an Inngest function to trigger next workflow(s)
-await executeTransition(step, conditional, result, functionRefs);
+const result = await pipeline.run(step, { userMessage }, sessionId);
 ```
 
-**When to use each:**
-| Use Case | Solution |
-|----------|----------|
-| Run agents in parallel, wait for all results, continue | `runAgentsInParallel` |
-| Trigger separate workflow(s) and exit | Transitions (`linearTransition`, `fanOutTransition`, `conditionalTransition`) |
+**Key points:**
+- Each branch contains its own sequence of agents (or nested branches)
+- Results from branch agents are stored in `context.results` by agent name
+- The branch result (last agent's output) is passed to the next step
+- Use `defaultBranch` to handle unexpected condition values
+
+#### Nested Branching
+
+Branches can be nested inside other branches for complex routing logic:
+
+```typescript
+const pipeline = createAgentPipeline(
+  { name: "nested-routing" },
+  [
+    defineAgent({ name: "initial-classifier", run: classifierAgent }),
+
+    defineBranch({
+      name: "primary-branch",
+      condition: (prev) => prev.mainCategory,
+      branches: {
+        support: [
+          defineAgent({ name: "support-classifier", run: supportClassifier }),
+          // Nested branch within the "support" branch
+          defineBranch({
+            name: "support-type-branch",
+            condition: (prev) => prev.supportType,
+            branches: {
+              technical: [
+                defineAgent({ name: "tech-agent", run: techAgent }),
+              ],
+              billing: [
+                defineAgent({ name: "billing-agent", run: billingAgent }),
+              ],
+            },
+            defaultBranch: "technical",
+          }),
+        ],
+        sales: [
+          defineAgent({ name: "sales-agent", run: salesAgent }),
+        ],
+      },
+      defaultBranch: "support",
+    }),
+
+    defineAgent({ name: "finalizer", run: finalizerAgent }),
+  ],
+);
+```
+
+Nested branches allow you to model complex decision trees where the routing logic depends on multiple classification steps.
 
 ### Human-in-the-Loop
 
@@ -461,7 +629,8 @@ const provider = await createLLMClient({
 
 See `src/examples/feature-validation/` for a full working example that demonstrates:
 
-- Multi-agent pipeline (gather context -> analyze -> report)
+- Multi-agent pipeline (evaluate context -> ask questions -> analyze -> report)
+- Conditional agent execution with `shouldRun`
 - Pre-call and post-call tools
 - Human-in-the-loop questions
 - Zod schema validation
@@ -489,7 +658,7 @@ src/
 │   ├── agent.ts        # runAgent() - core execution
 │   ├── streaming.ts    # StreamingManager class
 │   ├── metrics.ts      # AgentMetricsCollector class
-│   ├── pipeline.ts     # Pipelines, hooks, transitions
+│   ├── pipeline.ts     # Pipelines, hooks, parallel execution
 │   ├── prompt.ts       # Mustache templating + validation
 │   ├── questions.ts    # Human-in-the-loop
 │   ├── tools.ts        # Tool utilities + validation
@@ -544,17 +713,21 @@ Execute an LLM call with full durability.
 
 Create an LLM provider instance.
 
-### `createAgentPipeline(config, agents): AgentPipeline`
+### `createAgentPipeline(config, steps): AgentPipeline`
 
-Create a sequential agent pipeline with hooks.
+Create a pipeline with agents and optional branches.
 
 ### `defineAgent(config): AgentDefinition`
 
 Define an agent for use in pipelines.
 
-### `validatePipeline(config, agents): PipelineValidationResult`
+### `defineBranch(config): BranchDefinition`
 
-Validate pipeline configuration.
+Define a conditional branch point in a pipeline. Routes execution to different agent sequences based on the condition function result.
+
+### `validatePipeline(config, steps): PipelineValidationResult`
+
+Validate pipeline configuration including branches.
 
 ### `askUser(step, options): Promise<Record<string, string>>`
 

@@ -20,7 +20,7 @@ src/ai/
 ├── agent.ts          # runAgent() - core agent execution
 ├── streaming.ts      # StreamingManager class + message types
 ├── metrics.ts        # AgentMetricsCollector class + utilities
-├── pipeline.ts       # Pipeline orchestration + hooks + transitions
+├── pipeline.ts       # Pipeline orchestration + hooks
 ├── prompt.ts         # Mustache-based prompt templating + validation
 ├── questions.ts      # askUser() for human-in-the-loop
 ├── tools.ts          # Tool type guards, schema conversion, validation
@@ -360,6 +360,153 @@ onAgentError: async (error, context) => {
 }
 ```
 
+#### Conditional Branching
+
+Pipelines support conditional branching to route execution through different agent sequences based on runtime conditions. Use `defineBranch()` to create branch points in your pipeline.
+
+```typescript
+import { createAgentPipeline, defineAgent, defineBranch } from "./ai/pipeline";
+
+const pipeline = createAgentPipeline<InputType, OutputType>(
+  { name: "branching-pipeline" },
+  [
+    // First agent runs for all requests
+    defineAgent({
+      name: "classifier",
+      run: async (step, input, sessionId) => {
+        // Returns { category: "technical" | "billing" | "general" }
+        return await classifierAgent(step, input, sessionId);
+      },
+    }),
+
+    // Branch based on classification result
+    defineBranch({
+      name: "handler-branch",
+      description: "Route to specialized handler",
+      condition: (previousOutput) => previousOutput.category,
+      branches: {
+        technical: [
+          defineAgent({ name: "tech-lookup", run: techLookupAgent }),
+          defineAgent({ name: "tech-response", run: techResponseAgent }),
+        ],
+        billing: [
+          defineAgent({ name: "billing-lookup", run: billingLookupAgent }),
+          defineAgent({ name: "billing-response", run: billingResponseAgent }),
+        ],
+        general: [
+          defineAgent({ name: "general-response", run: generalResponseAgent }),
+        ],
+      },
+      defaultBranch: "general", // Fallback if condition returns unknown key
+    }),
+
+    // Final agent runs after any branch completes
+    defineAgent({
+      name: "finalizer",
+      run: async (step, input, sessionId) => {
+        return await finalizerAgent(step, input, sessionId);
+      },
+    }),
+  ],
+);
+```
+
+**Branch Definition Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | `string` | Yes | Unique identifier for the branch point |
+| `description` | `string` | No | Human-readable description |
+| `condition` | `(previousOutput, context) => string` | Yes | Function that returns the branch key to execute |
+| `branches` | `Record<string, AgentDefinition[]>` | Yes | Map of branch keys to agent sequences |
+| `defaultBranch` | `string` | No | Fallback branch key if condition returns unknown value |
+| `mapInput` | `(previousOutput, context) => unknown` | No | Transform input before passing to branch agents |
+
+**How Branching Works:**
+
+1. When execution reaches a branch, the `condition` function is called with the previous step's output
+2. The returned string determines which branch to execute
+3. All agents in the selected branch run sequentially
+4. The last agent's output from the branch becomes the input for the next pipeline step
+5. If `condition` returns a key not in `branches`, the `defaultBranch` is used (or an error is thrown if not specified)
+
+**Accessing Branch Results:**
+
+Results from branch agents are stored in `context.results` using their agent names:
+
+```typescript
+defineAgent({
+  name: "after-branch",
+  mapInput: (_prev, ctx) => ({
+    // Access results from any branch agent that ran
+    techResult: ctx.results["tech-response"],
+    billingResult: ctx.results["billing-response"],
+  }),
+  run: async (step, input, sessionId) => { /* ... */ },
+});
+```
+
+#### Nested Branching
+
+Branches can be nested inside other branches for complex routing scenarios. This allows you to model decision trees where routing depends on multiple classification steps:
+
+```typescript
+import { createAgentPipeline, defineAgent, defineBranch } from "./ai/pipeline";
+
+const pipeline = createAgentPipeline(
+  { name: "nested-routing" },
+  [
+    defineAgent({ name: "initial-classifier", run: classifierAgent }),
+
+    defineBranch({
+      name: "primary-branch",
+      condition: (prev) => prev.mainCategory, // "support" | "sales"
+      branches: {
+        support: [
+          defineAgent({ name: "support-classifier", run: supportClassifierAgent }),
+          // Nested branch within the "support" branch
+          defineBranch({
+            name: "support-type-branch",
+            condition: (prev) => prev.supportType, // "technical" | "billing"
+            branches: {
+              technical: [
+                defineAgent({ name: "tech-lookup", run: techLookupAgent }),
+                defineAgent({ name: "tech-response", run: techResponseAgent }),
+              ],
+              billing: [
+                defineAgent({ name: "billing-lookup", run: billingLookupAgent }),
+                defineAgent({ name: "billing-response", run: billingResponseAgent }),
+              ],
+            },
+            defaultBranch: "technical",
+          }),
+        ],
+        sales: [
+          defineAgent({ name: "sales-qualifier", run: salesQualifierAgent }),
+          defineAgent({ name: "sales-response", run: salesResponseAgent }),
+        ],
+      },
+      defaultBranch: "support",
+    }),
+
+    defineAgent({ name: "finalizer", run: finalizerAgent }),
+  ],
+);
+```
+
+**How Nested Branches Work:**
+
+1. Each branch path can contain any combination of agents and nested branches
+2. Results from all agents (including those in nested branches) are stored in `context.results`
+3. Execution flows through nested branches recursively until reaching agents
+4. The output of the innermost branch's last step propagates back up
+
+**Use Cases for Nested Branching:**
+
+- **Hierarchical classification**: First classify by category, then by subcategory
+- **Multi-stage routing**: Route based on multiple decision points
+- **Complex workflows**: Model decision trees with arbitrary depth
+
 ### 6. Human-in-the-Loop (`askUser`)
 
 Pause execution to ask the user questions.
@@ -524,37 +671,6 @@ const summary = formatMetricsSummary(metrics);
 const avgMetrics = calculateAverageMetrics([metrics1, metrics2, metrics3]);
 ```
 
-### 11. Pipeline Transitions (Advanced)
-
-For complex workflows with conditional routing.
-
-```typescript
-import {
-  linearTransition,
-  fanOutTransition,
-  conditionalTransition,
-  executeTransition,
-} from "./ai/pipeline";
-
-// Linear: single next step
-const linear = linearTransition("next-agent");
-
-// Fan-out: multiple parallel steps
-const fanOut = fanOutTransition(["agent-a", "agent-b", "agent-c"]);
-
-// Conditional: route based on result
-const conditional = conditionalTransition<MyResult>(
-  [
-    { condition: (result) => result.score > 80, to: "high-priority" },
-    { condition: (result) => result.score > 50, to: "medium-priority" },
-  ],
-  "low-priority", // default
-);
-
-// Execute transition (use step.invoke or step.sendEvent)
-await executeTransition(step, transition, result, functionRefs);
-```
-
 ## Type Reference
 
 ### Core Types
@@ -662,6 +778,25 @@ type AgentDefinition<TInput, TOutput, TPreviousOutput, TPipelineInput, TPipeline
   shouldRun?: (previousOutput: unknown, context: PipelineContext) => boolean | Promise<boolean>;
   skipResult?: unknown;
 };
+
+type BranchDefinition<TBranchKey, TPreviousOutput, TBranchOutput, TPipelineInput, TPipelineResults> = {
+  __type: "branch";
+  name: string;
+  description?: string;
+  condition: (
+    previousOutput: TPreviousOutput,
+    context: PipelineContext<TPipelineInput, TPipelineResults>,
+  ) => TBranchKey | Promise<TBranchKey>;
+  branches: Record<TBranchKey, PipelineStep[]>; // Can include nested branches
+  defaultBranch?: TBranchKey;
+  mapInput?: (
+    previousOutput: TPreviousOutput,
+    context: PipelineContext<TPipelineInput, TPipelineResults>,
+  ) => unknown;
+};
+
+// Union type for pipeline steps
+type PipelineStep<TPipelineInput> = AgentDefinition | BranchDefinition;
 
 type PipelineHooks<TInput, TOutput> = {
   onPipelineStart?: (input: TInput, sessionId?: string) => void | Promise<void>;
@@ -901,6 +1036,76 @@ const pipeline = createAgentPipeline(
 );
 ```
 
+### Pattern 6: Pipeline with Conditional Branching
+
+```typescript
+import { createAgentPipeline, defineAgent, defineBranch } from "./ai/pipeline";
+
+const supportPipeline = createAgentPipeline<SupportRequest, SupportResponse>(
+  { name: "support-pipeline" },
+  [
+    // Classify incoming request
+    defineAgent({
+      name: "classifier",
+      mapInput: (_prev, ctx) => ({ message: ctx.initialInput.message }),
+      run: classifierAgent, // Returns { category: "technical" | "billing" | "general", priority: number }
+    }),
+
+    // Route to specialized handlers based on category
+    defineBranch({
+      name: "category-router",
+      condition: (prev) => prev.category,
+      branches: {
+        technical: [
+          defineAgent({
+            name: "tech-search",
+            mapInput: (_prev, ctx) => ({
+              query: ctx.initialInput.message,
+              priority: ctx.results["classifier"].priority,
+            }),
+            run: technicalSearchAgent,
+          }),
+          defineAgent({
+            name: "tech-response",
+            run: technicalResponseAgent,
+          }),
+        ],
+        billing: [
+          defineAgent({
+            name: "billing-lookup",
+            mapInput: (_prev, ctx) => ({
+              userId: ctx.initialInput.userId,
+            }),
+            run: billingLookupAgent,
+          }),
+          defineAgent({
+            name: "billing-response",
+            run: billingResponseAgent,
+          }),
+        ],
+        general: [
+          defineAgent({
+            name: "general-response",
+            run: generalResponseAgent,
+          }),
+        ],
+      },
+      defaultBranch: "general",
+    }),
+
+    // Format final response (runs after any branch)
+    defineAgent({
+      name: "formatter",
+      mapInput: (prev, ctx) => ({
+        response: prev,
+        category: ctx.results["classifier"].category,
+      }),
+      run: formatterAgent,
+    }),
+  ],
+);
+```
+
 ## Gotchas and Best Practices
 
 1. **Always use deterministic step IDs for `askUser()`** - Non-deterministic IDs break Inngest replay.
@@ -932,3 +1137,9 @@ const pipeline = createAgentPipeline(
 14. **All providers support tool calling** - OpenAI, Anthropic, Gemini, Grok, and Azure OpenAI all have consistent tool support.
 
 15. **Use `shouldRun` for conditional agents** - Skip agents based on previous results or pipeline context.
+
+16. **Use `defineBranch` for forking pipelines** - When you need different agent sequences based on conditions, use branching instead of complex `shouldRun` logic.
+
+17. **Always provide `defaultBranch` for safety** - If the condition might return unexpected values, set a default branch to avoid runtime errors.
+
+18. **Branches can be nested arbitrarily** - Each branch path can contain agents or nested branches, allowing complex decision trees.

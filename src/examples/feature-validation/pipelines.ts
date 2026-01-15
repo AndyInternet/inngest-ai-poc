@@ -5,6 +5,12 @@
  * 1. The feature validation pipeline that composes all agents
  * 2. Inngest functions that expose the pipeline as event-triggered workflows
  *
+ * The pipeline demonstrates conditional agent execution using shouldRun:
+ * - evaluate-context: Always runs, determines if more info is needed
+ * - ask-questions: Only runs if hasEnoughContext is false (conditional)
+ * - analyze-feature: Always runs
+ * - generate-report: Always runs
+ *
  * @module feature-validation/pipelines
  */
 
@@ -12,22 +18,27 @@ import { inngest } from "../../inngest/client";
 import { createAgentPipeline, defineAgent } from "../../ai/pipeline";
 
 import {
-  gatherContextAgent,
+  evaluateContextAgent,
+  askQuestionsAgent,
   analyzeFeatureAgent,
   generateReportAgent,
 } from "./agents";
 
 import {
-  GatherContextResultSchema,
+  EvaluateContextResultSchema,
+  AskQuestionsResultSchema,
   AnalyzeFeatureResultSchema,
   GenerateReportResultSchema,
-  GatherContextInputSchema,
+  EvaluateContextInputSchema,
+  AskQuestionsInputSchema,
   AnalyzeFeatureInputSchema,
   GenerateReportInputSchema,
-  type GatherContextResult,
+  type EvaluateContextResult,
+  type AskQuestionsResult,
   type AnalyzeFeatureResult,
   type GenerateReportResult,
-  type GatherContextInput,
+  type EvaluateContextInput,
+  type AskQuestionsInput,
   type AnalyzeFeatureInput,
   type GenerateReportInput,
   type FeatureValidationInput,
@@ -41,10 +52,11 @@ import { createPipelineHooks } from "./hooks";
 // ============================================================================
 
 /**
- * Feature validation pipeline that composes all three agents.
+ * Feature validation pipeline that composes all four agents.
  *
  * This pipeline demonstrates:
  * - Sequential agent execution
+ * - Conditional execution with shouldRun (ask-questions only runs if needed)
  * - Context passing between agents via mapInput
  * - Input/output schema validation
  * - Pipeline lifecycle hooks
@@ -68,53 +80,124 @@ export const featureValidationPipeline = createAgentPipeline<
   {
     name: "feature-validation",
     description:
-      "Validate a feature request through context gathering, analysis, and report generation",
+      "Validate a feature request through context evaluation, optional questioning, analysis, and report generation",
     hooks: createPipelineHooks<FeatureValidationInput, GenerateReportResult>(),
   },
   [
-    // Agent 1: Gather Context
+    // Agent 1: Evaluate Context
+    // Always runs - determines if we have enough context to proceed
     defineAgent<
-      GatherContextInput,
-      GatherContextResult,
+      EvaluateContextInput,
+      EvaluateContextResult,
       FeatureValidationInput,
       FeatureValidationInput,
       Record<string, unknown>
     >({
-      name: "gather-context",
-      description: "Gather context and determine if enough information exists",
-      inputSchema: GatherContextInputSchema,
-      outputSchema: GatherContextResultSchema,
+      name: "evaluate-context",
+      description: "Evaluate if enough context exists to analyze the feature",
+      inputSchema: EvaluateContextInputSchema,
+      outputSchema: EvaluateContextResultSchema,
       mapInput: (_prev, ctx) => ({
         featureDescription: ctx.initialInput.featureDescription,
         existingContext: ctx.initialInput.existingContext || "",
       }),
       run: async (step, input, sessionId) => {
-        return gatherContextAgent(
+        return evaluateContextAgent(
           step,
           input.featureDescription,
-          input.existingContext || "",
+          input.existingContext,
           sessionId,
         );
       },
     }),
 
-    // Agent 2: Analyze Feature
+    // Agent 2: Ask Questions (Conditional)
+    // Only runs if evaluate-context determined we need more information
+    defineAgent<
+      AskQuestionsInput,
+      AskQuestionsResult,
+      EvaluateContextResult,
+      FeatureValidationInput,
+      { "evaluate-context": EvaluateContextResult }
+    >({
+      name: "ask-questions",
+      description:
+        "Ask clarifying questions if more context is needed (human-in-the-loop)",
+      inputSchema: AskQuestionsInputSchema,
+      outputSchema: AskQuestionsResultSchema,
+      // Only run if we don't have enough context AND we have a sessionId for user interaction
+      shouldRun: async (prevResult, ctx) => {
+        const evalResult = prevResult as EvaluateContextResult;
+        const hasSessionId = !!ctx.sessionId;
+        const needsQuestions =
+          !evalResult.hasEnoughContext &&
+          Array.isArray(evalResult.questions) &&
+          evalResult.questions.length > 0;
+        return hasSessionId && needsQuestions;
+      },
+      // If skipped, return empty result
+      skipResult: {
+        enrichedContext: "",
+        answersReceived: 0,
+      } as AskQuestionsResult,
+      mapInput: (_prev, ctx) => {
+        const evalResult = ctx.results["evaluate-context"];
+        return {
+          featureDescription: ctx.initialInput.featureDescription,
+          existingContext: ctx.initialInput.existingContext || "",
+          questions: evalResult.questions || [],
+        };
+      },
+      run: async (step, input, sessionId) => {
+        return askQuestionsAgent(
+          step,
+          input.featureDescription,
+          input.existingContext,
+          input.questions,
+          sessionId!, // sessionId is guaranteed by shouldRun
+        );
+      },
+    }),
+
+    // Agent 3: Analyze Feature
+    // Always runs - uses context from either evaluate-context or ask-questions
     defineAgent<
       AnalyzeFeatureInput,
       AnalyzeFeatureResult,
-      GatherContextResult,
+      AskQuestionsResult,
       FeatureValidationInput,
-      { "gather-context": GatherContextResult }
+      {
+        "evaluate-context": EvaluateContextResult;
+        "ask-questions": AskQuestionsResult;
+      }
     >({
       name: "analyze-feature",
       description:
         "Analyze the feature for impact, value, and strategic alignment",
       inputSchema: AnalyzeFeatureInputSchema,
       outputSchema: AnalyzeFeatureResultSchema,
-      mapInput: (_prev, ctx) => ({
-        featureDescription: ctx.initialInput.featureDescription,
-        context: JSON.stringify(ctx.results["gather-context"]),
-      }),
+      mapInput: (_prev, ctx) => {
+        const evalResult = ctx.results["evaluate-context"];
+        const askResult = ctx.results["ask-questions"];
+
+        // Use enriched context from ask-questions if available,
+        // otherwise use context summary from evaluate-context
+        let context: string;
+        if (askResult && askResult.enrichedContext) {
+          context = askResult.enrichedContext;
+        } else if (evalResult.contextSummary) {
+          context = evalResult.contextSummary;
+        } else {
+          context =
+            ctx.initialInput.existingContext ||
+            "No additional context available.";
+        }
+
+        return {
+          featureDescription: ctx.initialInput.featureDescription,
+          context,
+        };
+      },
       run: async (step, input, sessionId) => {
         return analyzeFeatureAgent(
           step,
@@ -125,14 +208,16 @@ export const featureValidationPipeline = createAgentPipeline<
       },
     }),
 
-    // Agent 3: Generate Report
+    // Agent 4: Generate Report
+    // Always runs - creates final report from analysis
     defineAgent<
       GenerateReportInput,
       GenerateReportResult,
       AnalyzeFeatureResult,
       FeatureValidationInput,
       {
-        "gather-context": GatherContextResult;
+        "evaluate-context": EvaluateContextResult;
+        "ask-questions": AskQuestionsResult;
         "analyze-feature": AnalyzeFeatureResult;
       }
     >({
@@ -159,9 +244,10 @@ export const featureValidationPipeline = createAgentPipeline<
  *
  * Triggered by the "feature.validation.start" event, this function runs
  * the complete feature validation pipeline:
- * 1. Gather context (may ask clarifying questions)
- * 2. Analyze feature across multiple dimensions
- * 3. Generate comprehensive report
+ * 1. Evaluate context (determine if enough info exists)
+ * 2. Ask questions (only if needed - conditional execution)
+ * 3. Analyze feature across multiple dimensions
+ * 4. Generate comprehensive report
  *
  * @example
  * ```typescript

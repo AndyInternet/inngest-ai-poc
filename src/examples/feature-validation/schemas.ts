@@ -17,23 +17,36 @@ import { z } from "zod";
 // ============================================================================
 
 /**
- * Input schema for the gather-context agent.
+ * Input schema for the evaluate-context agent.
  */
-export const GatherContextInputSchema = z.object({
+export const EvaluateContextInputSchema = z.object({
   featureDescription: z.string().min(1).describe("The feature to be validated"),
   existingContext: z
     .string()
     .describe("Any existing context about the feature"),
 });
 
-export type GatherContextInput = z.infer<typeof GatherContextInputSchema>;
+export type EvaluateContextInput = z.infer<typeof EvaluateContextInputSchema>;
+
+/**
+ * Input schema for the ask-questions agent.
+ */
+export const AskQuestionsInputSchema = z.object({
+  featureDescription: z.string().min(1).describe("The feature to be validated"),
+  existingContext: z
+    .string()
+    .describe("Any existing context about the feature"),
+  questions: z.array(z.string()).describe("Questions to ask the user"),
+});
+
+export type AskQuestionsInput = z.infer<typeof AskQuestionsInputSchema>;
 
 /**
  * Input schema for the analyze-feature agent.
  */
 export const AnalyzeFeatureInputSchema = z.object({
   featureDescription: z.string().min(1).describe("The feature to be analyzed"),
-  context: z.string().describe("Context gathered from the previous agent"),
+  context: z.string().describe("Context gathered from the previous agents"),
 });
 
 export type AnalyzeFeatureInput = z.infer<typeof AnalyzeFeatureInputSchema>;
@@ -68,12 +81,12 @@ export type FeatureValidationInput = z.infer<
 // ============================================================================
 
 /**
- * Schema for the gather-context agent result.
+ * Schema for the evaluate-context agent result.
  *
  * This agent determines if there's enough context to evaluate a feature
  * and generates questions if more information is needed.
  */
-export const GatherContextResultSchema = z.object({
+export const EvaluateContextResultSchema = z.object({
   reasoning: z
     .string()
     .describe("Chain-of-thought analysis of available context"),
@@ -84,13 +97,31 @@ export const GatherContextResultSchema = z.object({
     .array(z.string())
     .nullish()
     .describe("Questions to ask if more context is needed"),
-  summary: z
+  contextSummary: z
     .string()
     .nullish()
     .describe("Brief summary of the context gathered"),
 });
 
-export type GatherContextResult = z.infer<typeof GatherContextResultSchema>;
+export type EvaluateContextResult = z.infer<typeof EvaluateContextResultSchema>;
+
+/**
+ * Schema for the ask-questions agent result.
+ *
+ * This agent handles human-in-the-loop questioning and returns
+ * the enriched context with user answers.
+ */
+export const AskQuestionsResultSchema = z.object({
+  enrichedContext: z
+    .string()
+    .describe("The context enriched with user answers"),
+  answersReceived: z
+    .number()
+    .int()
+    .describe("Number of answers received from the user"),
+});
+
+export type AskQuestionsResult = z.infer<typeof AskQuestionsResultSchema>;
 
 /**
  * Schema for the analyze-feature agent result.

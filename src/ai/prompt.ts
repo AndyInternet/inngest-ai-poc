@@ -1,29 +1,13 @@
 import Mustache from "mustache";
-import type { LLMMessage, Prompt, PromptMessage } from "./types";
+import type {
+  LLMMessage,
+  Prompt,
+  PromptMessage,
+  HydratePromptOptions,
+} from "./types";
 
-/**
- * Options for hydrating prompts.
- */
-export type HydratePromptOptions = {
-  /**
-   * If true, logs a warning when variables referenced in the template
-   * are not provided in the variables object.
-   * @default false
-   */
-  warnOnMissingVars?: boolean;
-
-  /**
-   * If true, throws an error when variables referenced in the template
-   * are not provided in the variables object.
-   * @default false
-   */
-  throwOnMissingVars?: boolean;
-
-  /**
-   * Custom logger function for warnings. Defaults to console.warn.
-   */
-  logger?: (message: string) => void;
-};
+// Re-export type for backwards compatibility
+export type { HydratePromptOptions } from "./types";
 
 /**
  * Regular expression to match Mustache variable references.
