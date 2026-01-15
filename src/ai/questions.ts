@@ -102,11 +102,14 @@ export async function askUser(
   }
 
   // Wait for user answers event
+  // Filter by sessionId only - the question key check was causing issues with CEL syntax
+  console.log(`[askUser] Waiting for event "${eventName}" with sessionId="${sessionId}", stepId="${stepId}"`);
   const answersEvent = await step.waitForEvent(stepId, {
     event: eventName,
     timeout,
     if: `event.data.sessionId == "${sessionId}"`,
   });
+  console.log(`[askUser] Received event:`, JSON.stringify(answersEvent?.data || null));
 
   // Extract answers from event, defaulting to empty object
   const rawAnswers = answersEvent?.data?.answers || {};

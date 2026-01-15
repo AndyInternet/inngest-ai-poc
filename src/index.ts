@@ -72,18 +72,127 @@ wss.on("connection", (ws, req) => {
 // Helper function to broadcast message to all WebSocket clients for a session
 export function broadcastToSession(sessionId: string, message: any) {
   const connections = wsConnections.get(sessionId);
-  if (connections) {
-    const messageStr = JSON.stringify(message);
-    connections.forEach((ws) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(messageStr);
-      }
-    });
+  if (!connections || connections.size === 0) {
+    console.log(`[broadcastToSession] No WebSocket connections found for session: ${sessionId}`);
+    console.log(`[broadcastToSession] Available sessions: ${Array.from(wsConnections.keys()).join(', ') || 'none'}`);
+    return;
   }
+
+  const messageStr = JSON.stringify(message);
+  let sentCount = 0;
+  connections.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      console.log(`[broadcastToSession] Sending ${messageStr.length} bytes to WebSocket...`);
+      ws.send(messageStr);
+      sentCount++;
+      console.log(`[broadcastToSession] ws.send() completed`);
+    } else {
+      console.log(`[broadcastToSession] WebSocket not open, state: ${ws.readyState}`);
+    }
+  });
+  console.log(`[broadcastToSession] Sent to ${sentCount}/${connections.size} clients for session: ${sessionId}`);
 }
 
 app.use(express.json());
 app.use(express.static("dist/examples"));
+
+// Landing page with links to examples
+app.get("/", (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>AI Agent Pipeline Examples</title>
+      <style>
+        * { box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          margin: 0;
+          padding: 40px;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          min-height: 100vh;
+        }
+        .container {
+          max-width: 600px;
+          margin: 0 auto;
+        }
+        h1 {
+          color: white;
+          text-align: center;
+          margin-bottom: 10px;
+        }
+        .subtitle {
+          color: rgba(255,255,255,0.9);
+          text-align: center;
+          margin-bottom: 40px;
+        }
+        .card {
+          background: white;
+          border-radius: 12px;
+          padding: 24px;
+          margin-bottom: 20px;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+          text-decoration: none;
+          display: block;
+          transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .card:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+        }
+        .card h2 {
+          margin: 0 0 8px 0;
+          color: #333;
+        }
+        .card p {
+          margin: 0;
+          color: #666;
+          line-height: 1.5;
+        }
+        .tag {
+          display: inline-block;
+          background: #e9ecef;
+          color: #495057;
+          padding: 4px 10px;
+          border-radius: 12px;
+          font-size: 12px;
+          margin-top: 12px;
+        }
+        .footer {
+          text-align: center;
+          color: rgba(255,255,255,0.8);
+          margin-top: 40px;
+          font-size: 14px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>AI Agent Pipeline Examples</h1>
+        <p class="subtitle">Demonstrating Inngest-powered AI agent workflows</p>
+
+        <a href="/feature-validation/" class="card">
+          <h2>Feature Validation</h2>
+          <p>Validate feature ideas with AI-powered analysis. Demonstrates sequential agent pipelines, human-in-the-loop questioning, and comprehensive report generation.</p>
+          <span class="tag">Sequential Pipeline</span>
+        </a>
+
+        <a href="/games-with-branching/" class="card">
+          <h2>Games with Branching</h2>
+          <p>Play Trivia or 20 Questions! Demonstrates pipeline branching where user choice determines which game agent runs.</p>
+          <span class="tag">Pipeline Branching</span>
+        </a>
+
+        <p class="footer">
+          Make sure the Inngest dev server is running: <code>npx inngest-cli@latest dev</code>
+        </p>
+      </div>
+    </body>
+    </html>
+  `);
+});
 
 app.use(
   "/api/inngest",
@@ -203,6 +312,9 @@ app.get("/api/realtime/stream", async (req, res) => {
 app.get("/api/realtime.js", async (req, res) => {
   try {
     res.setHeader("Content-Type", "application/javascript");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     res.send(`
       // Inngest Realtime Client using WebSocket
       (function() {
@@ -240,8 +352,10 @@ app.get("/api/realtime.js", async (req, res) => {
                 };
 
                 ws.onmessage = (event) => {
+                  console.log('🔔 RAW WebSocket message received, length:', event.data?.length);
                   try {
                     const message = JSON.parse(event.data);
+                    console.log('🔔 Parsed message type:', message.type);
 
                     // Skip connection confirmation messages
                     if (message.type === 'connected') {
@@ -249,12 +363,15 @@ app.get("/api/realtime.js", async (req, res) => {
                       return;
                     }
 
-                    console.log('📨 Received WebSocket message:', message.data || message);
+                    console.log('📨 Received WebSocket message:', message.type, message.content?.substring(0, 50) || '(no content)');
 
+                    // Pass the entire message - don't extract .data as that's metadata, not the message itself
                     const dataEvent = new CustomEvent('data', {
-                      detail: message.data || message
+                      detail: message
                     });
+                    console.log('🔔 Dispatching data event with detail:', message.type);
                     eventTarget.dispatchEvent(dataEvent);
+                    console.log('🔔 Data event dispatched');
                   } catch (error) {
                     console.error('Failed to parse WebSocket message:', error, event.data);
                   }
@@ -383,21 +500,34 @@ app.post("/api/submit-answers", async (req, res) => {
   try {
     const { sessionId, answers } = req.body;
 
+    console.log(`[submit-answers] Received: sessionId=${sessionId}, answers=`, answers);
+
     if (!sessionId || !answers) {
       return res
         .status(400)
         .json({ error: "sessionId and answers are required" });
     }
 
-    // Send event to continue workflow with answers
-    await inngest.send({
-      name: "feature.validation.answers.provided",
-      data: {
-        sessionId,
-        answers,
-      },
-    });
+    // Send events for both workflows - they will pick up based on sessionId
+    console.log(`[submit-answers] Sending games.user.response event for session ${sessionId}`);
+    await Promise.all([
+      inngest.send({
+        name: "feature.validation.answers.provided",
+        data: {
+          sessionId,
+          answers,
+        },
+      }),
+      inngest.send({
+        name: "games.user.response",
+        data: {
+          sessionId,
+          answers,
+        },
+      }),
+    ]);
 
+    console.log(`[submit-answers] Events sent successfully`);
     res.json({ success: true });
   } catch (error) {
     console.error("Failed to submit answers:", error);
@@ -405,29 +535,43 @@ app.post("/api/submit-answers", async (req, res) => {
   }
 });
 
+// Endpoint to trigger the games workflow
+app.post("/api/trigger-game", async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId is required" });
+    }
+
+    const eventId = await inngest.send({
+      name: "games.start",
+      data: {
+        sessionId,
+      },
+    });
+
+    res.json({
+      success: true,
+      eventId: eventId.ids[0],
+      sessionId,
+    });
+  } catch (error) {
+    console.error("Failed to trigger game:", error);
+    res.status(500).json({ error: "Failed to trigger game" });
+  }
+});
+
 httpServer.listen(PORT, () => {
-  console.log("🚀 AI Feature Validation Tool");
+  console.log("🚀 AI Agent Pipeline Examples");
   console.log("═".repeat(50));
   console.log(`✅ Server running on port ${PORT}`);
-  console.log(
-    "✅ WebSocket server ready on ws://localhost:${PORT}/api/realtime/ws",
-  );
+  console.log(`✅ WebSocket server ready`);
   console.log("✅ Inngest functions ready");
-  console.log("✅ Web interface available");
   console.log("✅ API endpoints configured\n");
 
-  console.log("🌐 Access the tool:");
-  console.log(`   http://localhost:${PORT}/feature-validation/\n`);
+  console.log(`🌐 Open in browser: http://localhost:${PORT}\n`);
 
   console.log("📝 Make sure Inngest dev server is also running:");
   console.log("   npx inngest-cli@latest dev\n");
-
-  console.log("💡 The web interface provides:");
-  console.log("   • Feature input form");
-  console.log("   • Real-time AI agent streaming via WebSocket");
-  console.log("   • Workflow progress tracking");
-  console.log("   • Interactive results display\n");
-
-  console.log("⚠️  Keep this terminal running for the service.");
-  console.log("   Press Ctrl+C to stop.\n");
 });

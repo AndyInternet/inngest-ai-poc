@@ -67,10 +67,20 @@ function transformMessagesToAnthropic(messages: LLMMessage[]): MessageParam[] {
     }
 
     if (msg.role === "user") {
-      result.push({
-        role: "user",
-        content: msg.content,
-      });
+      // Anthropic requires non-empty, non-whitespace content for user messages
+      const content = msg.content?.trim();
+      if (!content) {
+        console.error("[Anthropic] Warning: User message has empty content, using placeholder");
+        result.push({
+          role: "user",
+          content: "[No input provided]",
+        });
+      } else {
+        result.push({
+          role: "user",
+          content,
+        });
+      }
       continue;
     }
 
@@ -268,6 +278,17 @@ export class AnthropicProvider implements LLMProvider {
     // Transform messages to Anthropic format
     const anthropicMessages = transformMessagesToAnthropic(otherMessages);
 
+    // Anthropic requires at least one message
+    if (anthropicMessages.length === 0) {
+      throw new Error(
+        "Anthropic API requires at least one non-system message. " +
+        `Received ${messages.length} messages (${systemMessages.length} system messages).`
+      );
+    }
+
+    // Debug: Log messages being sent
+    console.log("[Anthropic] Sending messages:", JSON.stringify(anthropicMessages, null, 2));
+
     // Transform tools if provided
     const tools = transformToolsToAnthropic(config.tools);
 
@@ -325,6 +346,17 @@ export class AnthropicProvider implements LLMProvider {
 
     // Transform messages to Anthropic format
     const anthropicMessages = transformMessagesToAnthropic(otherMessages);
+
+    // Anthropic requires at least one message
+    if (anthropicMessages.length === 0) {
+      throw new Error(
+        "Anthropic API requires at least one non-system message. " +
+        `Received ${messages.length} messages (${systemMessages.length} system messages).`
+      );
+    }
+
+    // Debug: Log messages being sent
+    console.log("[Anthropic Stream] Sending messages:", JSON.stringify(anthropicMessages, null, 2));
 
     // Note: Tool calling during streaming has limited support
     // Tools are not passed during streaming to avoid complications
