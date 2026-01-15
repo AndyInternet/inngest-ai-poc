@@ -291,7 +291,7 @@ export type AskUserOptions = {
 };
 
 // =============================================================================
-// Flow/Pipeline Types
+// Pipeline Types
 // =============================================================================
 
 /**
@@ -394,11 +394,11 @@ export type AgentPipeline<TInput, TOutput> = {
 };
 
 /**
- * Defines how to transition between agents/functions in a flow.
+ * Defines how to transition between agents/functions in a pipeline.
  *
  * @typeParam TResult - The type of result passed to conditional branch functions
  */
-export type FlowTransition<TResult = unknown> =
+export type PipelineTransition<TResult = unknown> =
   | {
       type: "linear";
       /** The target agent/function name to transition to */

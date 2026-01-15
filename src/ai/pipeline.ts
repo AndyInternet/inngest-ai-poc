@@ -4,7 +4,7 @@ import type {
   PipelineContext,
   PipelineConfig,
   AgentPipeline,
-  FlowTransition,
+  PipelineTransition,
 } from "./types";
 
 // =============================================================================
@@ -592,7 +592,7 @@ export async function runAgentsInParallel<
 }
 
 // =============================================================================
-// Flow Transition Helpers
+// Pipeline Transition Helpers
 // =============================================================================
 
 /**
@@ -607,7 +607,7 @@ export async function runAgentsInParallel<
  * await executeTransition(step, transition, result, functionRefs);
  * ```
  */
-export function linearTransition(to: string): FlowTransition<unknown> {
+export function linearTransition(to: string): PipelineTransition<unknown> {
   return { type: "linear", to };
 }
 
@@ -627,7 +627,7 @@ export function linearTransition(to: string): FlowTransition<unknown> {
  * await executeTransition(step, transition, result, functionRefs);
  * ```
  */
-export function branchTransition(to: string[]): FlowTransition<unknown> {
+export function branchTransition(to: string[]): PipelineTransition<unknown> {
   return { type: "branch", to };
 }
 
@@ -654,7 +654,7 @@ export function branchTransition(to: string[]): FlowTransition<unknown> {
 export function conditionalTransition<TResult = unknown>(
   branches: Array<{ condition: (result: TResult) => boolean; to: string }>,
   defaultTo?: string,
-): FlowTransition<TResult> {
+): PipelineTransition<TResult> {
   return {
     type: "conditional",
     branches,
@@ -663,8 +663,8 @@ export function conditionalTransition<TResult = unknown>(
 }
 
 /**
- * Execute a flow transition by invoking Inngest functions or sending events.
- * This should be called at the end of an Inngest function to continue the flow.
+ * Execute a pipeline transition by invoking Inngest functions or sending events.
+ * This should be called at the end of an Inngest function to continue the pipeline.
  *
  * ## Behavior
  *
@@ -698,7 +698,7 @@ export function conditionalTransition<TResult = unknown>(
  */
 export async function executeTransition<TResult = unknown>(
   step: StepTools,
-  transition: FlowTransition<TResult> | undefined,
+  transition: PipelineTransition<TResult> | undefined,
   result: TResult,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   functionRefs: Map<string, any>,

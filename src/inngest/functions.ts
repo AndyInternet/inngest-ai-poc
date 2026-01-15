@@ -1,3 +1,3 @@
-import { featureValidationFunctions } from "../examples/feature-validation/functions";
+import { featureValidationFunctions } from "../examples/feature-validation/pipelines";
 
 export const functions = [...featureValidationFunctions];

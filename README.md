@@ -210,7 +210,7 @@ try {
 Chain multiple agents with lifecycle hooks and error recovery:
 
 ```typescript
-import { createAgentPipeline, defineAgent } from "./ai/flow";
+import { createAgentPipeline, defineAgent } from "./ai/pipeline";
 
 const pipeline = createAgentPipeline(
   {
@@ -420,7 +420,7 @@ src/
 │   ├── agent.ts        # runAgent() - core execution
 │   ├── streaming.ts    # StreamingManager class
 │   ├── metrics.ts      # AgentMetricsCollector class
-│   ├── flow.ts         # Pipelines, hooks, transitions
+│   ├── pipeline.ts     # Pipelines, hooks, transitions
 │   ├── prompt.ts       # Mustache templating + validation
 │   ├── questions.ts    # Human-in-the-loop
 │   ├── tools.ts        # Tool utilities + validation
@@ -434,7 +434,16 @@ src/
 │       ├── grok.ts         # xAI Grok provider
 │       └── azure-openai.ts # Azure OpenAI provider
 ├── examples/
-│   └── feature-validation/  # Complete example
+│   └── feature-validation/
+│       ├── agents.ts       # Individual agent functions
+│       ├── hooks.ts        # Agent and pipeline lifecycle hooks
+│       ├── pipelines.ts    # Pipeline definition + Inngest functions
+│       ├── prompts.ts      # Prompt templates
+│       ├── providers.ts    # LLM provider configuration
+│       ├── schemas.ts      # Zod validation schemas
+│       ├── tools.ts        # Pre-call and post-call tools
+│       ├── utils.ts        # Utility functions
+│       └── index.html      # Demo UI
 └── inngest/
     ├── client.ts       # Inngest client
     └── functions.ts    # Function registry
