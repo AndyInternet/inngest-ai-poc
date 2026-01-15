@@ -1,139 +1,58 @@
 import OpenAI from "openai";
-import type {
-  LLMProvider,
-  LLMMessage,
-  LLMConfig,
-  LLMResponse,
-  LLMStreamChunk,
-  ProviderConfig,
-  ToolCallResponse,
-  FunctionDefinition,
-} from "../types";
+import type { ProviderConfig } from "../types";
+import { OpenAICompatibleProvider } from "./openai-base";
 
-export class GrokProvider implements LLMProvider {
-  private client: OpenAI;
+/**
+ * Default base URL for the Grok (xAI) API.
+ */
+const GROK_DEFAULT_BASE_URL = "https://api.x.ai/v1";
 
+/**
+ * Grok (xAI) LLM provider.
+ *
+ * Grok uses an OpenAI-compatible API, so this provider extends the
+ * OpenAI-compatible base class. It supports Grok models with both
+ * completion and streaming interfaces.
+ *
+ * @example
+ * ```typescript
+ * const provider = new GrokProvider({
+ *   type: "grok",
+ *   apiKey: process.env.XAI_API_KEY,
+ * });
+ *
+ * const response = await provider.complete(messages, {
+ *   model: "grok-1",
+ *   temperature: 0.7,
+ *   maxTokens: 1000,
+ * });
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // With custom base URL
+ * const provider = new GrokProvider({
+ *   type: "grok",
+ *   apiKey: process.env.XAI_API_KEY,
+ *   baseUrl: "https://custom-grok-proxy.example.com/v1",
+ * });
+ * ```
+ */
+export class GrokProvider extends OpenAICompatibleProvider {
+  protected client: OpenAI;
+
+  /**
+   * Create a new Grok provider instance.
+   *
+   * @param config - Provider configuration
+   * @param config.apiKey - xAI API key
+   * @param config.baseUrl - Optional custom base URL (defaults to https://api.x.ai/v1)
+   */
   constructor(config: ProviderConfig) {
+    super();
     this.client = new OpenAI({
       apiKey: config.apiKey,
-      baseURL: config.baseUrl || "https://api.x.ai/v1",
+      baseURL: config.baseUrl || GROK_DEFAULT_BASE_URL,
     });
-  }
-
-  async complete(
-    messages: LLMMessage[],
-    config: LLMConfig,
-  ): Promise<LLMResponse> {
-    const grokMessages = messages.map((msg) => {
-      const base: any = {
-        role: msg.role === "tool" ? "tool" : msg.role,
-        content: msg.content,
-      };
-
-      if (msg.toolCalls) {
-        base.tool_calls = msg.toolCalls.map((tc: ToolCallResponse) => ({
-          id: tc.id,
-          type: tc.type,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        }));
-      }
-
-      if (msg.toolCallId) {
-        base.tool_call_id = msg.toolCallId;
-      }
-
-      return base;
-    });
-
-    const response = await this.client.chat.completions.create({
-      model: config.model,
-      messages: grokMessages,
-      temperature: config.temperature,
-      max_tokens: config.maxTokens,
-      top_p: config.topP,
-      tools: config.tools?.map((tool: FunctionDefinition) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
-        },
-      })),
-      stream: false,
-    });
-
-    const choice = response.choices[0];
-    const toolCalls = choice.message.tool_calls?.map((tc) => ({
-      id: tc.id,
-      type: "function" as const,
-      function: {
-        name: tc.function.name,
-        arguments: tc.function.arguments,
-      },
-    }));
-
-    return {
-      content: choice.message.content || "",
-      finishReason: choice.finish_reason,
-      toolCalls,
-      usage: response.usage
-        ? {
-            promptTokens: response.usage.prompt_tokens,
-            completionTokens: response.usage.completion_tokens,
-            totalTokens: response.usage.total_tokens,
-          }
-        : undefined,
-    };
-  }
-
-  async *stream(
-    messages: LLMMessage[],
-    config: LLMConfig,
-  ): AsyncIterableIterator<LLMStreamChunk> {
-    const grokMessages = messages.map((msg) => {
-      const base: any = {
-        role: msg.role === "tool" ? "tool" : msg.role,
-        content: msg.content,
-      };
-
-      if (msg.toolCalls) {
-        base.tool_calls = msg.toolCalls.map((tc: ToolCallResponse) => ({
-          id: tc.id,
-          type: tc.type,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        }));
-      }
-
-      if (msg.toolCallId) {
-        base.tool_call_id = msg.toolCallId;
-      }
-
-      return base;
-    });
-
-    const stream = await this.client.chat.completions.create({
-      model: config.model,
-      messages: grokMessages,
-      temperature: config.temperature,
-      max_tokens: config.maxTokens,
-      top_p: config.topP,
-      stream: true,
-    });
-
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta;
-      if (delta?.content) {
-        yield {
-          content: delta.content,
-          finishReason: chunk.choices[0]?.finish_reason || undefined,
-        };
-      }
-    }
   }
 }

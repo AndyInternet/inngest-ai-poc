@@ -1,140 +1,65 @@
 import OpenAI from "openai";
-import type {
-  LLMProvider,
-  LLMMessage,
-  LLMConfig,
-  LLMResponse,
-  LLMStreamChunk,
-  ProviderConfig,
-  ToolCallResponse,
-  FunctionDefinition,
-} from "../types";
+import type { ProviderConfig } from "../types";
+import { OpenAICompatibleProvider } from "./openai-base";
 
-export class OpenAIProvider implements LLMProvider {
-  private client: OpenAI;
+/**
+ * OpenAI LLM provider.
+ *
+ * Supports all OpenAI chat models including GPT-4, GPT-4 Turbo, GPT-3.5 Turbo,
+ * and newer models. Provides both completion and streaming interfaces with
+ * full tool/function calling support.
+ *
+ * @example
+ * ```typescript
+ * const provider = new OpenAIProvider({
+ *   type: "openai",
+ *   apiKey: process.env.OPENAI_API_KEY,
+ * });
+ *
+ * const response = await provider.complete(messages, {
+ *   model: "gpt-4-turbo",
+ *   temperature: 0.7,
+ *   maxTokens: 1000,
+ * });
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // With organization ID
+ * const provider = new OpenAIProvider({
+ *   type: "openai",
+ *   apiKey: process.env.OPENAI_API_KEY,
+ *   organizationId: "org-xxx",
+ * });
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // With custom base URL (for proxies or compatible APIs)
+ * const provider = new OpenAIProvider({
+ *   type: "openai",
+ *   apiKey: process.env.OPENAI_API_KEY,
+ *   baseUrl: "https://my-proxy.example.com/v1",
+ * });
+ * ```
+ */
+export class OpenAIProvider extends OpenAICompatibleProvider {
+  protected client: OpenAI;
 
+  /**
+   * Create a new OpenAI provider instance.
+   *
+   * @param config - Provider configuration
+   * @param config.apiKey - OpenAI API key
+   * @param config.baseUrl - Optional custom base URL
+   * @param config.organizationId - Optional organization ID
+   */
   constructor(config: ProviderConfig) {
+    super();
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseUrl,
       organization: config.organizationId,
     });
-  }
-
-  async complete(
-    messages: LLMMessage[],
-    config: LLMConfig,
-  ): Promise<LLMResponse> {
-    const openaiMessages = messages.map((msg) => {
-      const base: any = {
-        role: msg.role === "tool" ? "tool" : msg.role,
-        content: msg.content,
-      };
-
-      if (msg.toolCalls) {
-        base.tool_calls = msg.toolCalls.map((tc: ToolCallResponse) => ({
-          id: tc.id,
-          type: tc.type,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        }));
-      }
-
-      if (msg.toolCallId) {
-        base.tool_call_id = msg.toolCallId;
-      }
-
-      return base;
-    });
-
-    const response = await this.client.chat.completions.create({
-      model: config.model,
-      messages: openaiMessages,
-      temperature: config.temperature,
-      max_tokens: config.maxTokens,
-      top_p: config.topP,
-      tools: config.tools?.map((tool: FunctionDefinition) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
-        },
-      })),
-      stream: false,
-    });
-
-    const choice = response.choices[0];
-    const toolCalls = choice.message.tool_calls?.map((tc) => ({
-      id: tc.id,
-      type: "function" as const,
-      function: {
-        name: tc.function.name,
-        arguments: tc.function.arguments,
-      },
-    }));
-
-    return {
-      content: choice.message.content || "",
-      finishReason: choice.finish_reason,
-      toolCalls,
-      usage: response.usage
-        ? {
-            promptTokens: response.usage.prompt_tokens,
-            completionTokens: response.usage.completion_tokens,
-            totalTokens: response.usage.total_tokens,
-          }
-        : undefined,
-    };
-  }
-
-  async *stream(
-    messages: LLMMessage[],
-    config: LLMConfig,
-  ): AsyncIterableIterator<LLMStreamChunk> {
-    const openaiMessages = messages.map((msg) => {
-      const base: any = {
-        role: msg.role === "tool" ? "tool" : msg.role,
-        content: msg.content,
-      };
-
-      if (msg.toolCalls) {
-        base.tool_calls = msg.toolCalls.map((tc: ToolCallResponse) => ({
-          id: tc.id,
-          type: tc.type,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        }));
-      }
-
-      if (msg.toolCallId) {
-        base.tool_call_id = msg.toolCallId;
-      }
-
-      return base;
-    });
-
-    const stream = await this.client.chat.completions.create({
-      model: config.model,
-      messages: openaiMessages,
-      temperature: config.temperature,
-      max_tokens: config.maxTokens,
-      top_p: config.topP,
-      stream: true,
-    });
-
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta;
-      if (delta?.content) {
-        yield {
-          content: delta.content,
-          finishReason: chunk.choices[0]?.finish_reason || undefined,
-        };
-      }
-    }
   }
 }

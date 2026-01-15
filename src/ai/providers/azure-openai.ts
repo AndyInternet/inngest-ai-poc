@@ -1,147 +1,104 @@
 import { AzureOpenAI } from "openai";
-import type {
-  LLMProvider,
-  LLMMessage,
-  LLMConfig,
-  LLMResponse,
-  LLMStreamChunk,
-  ProviderConfig,
-  ToolCallResponse,
-  FunctionDefinition,
-} from "../types";
+import type OpenAI from "openai";
+import type { ProviderConfig } from "../types";
+import { OpenAICompatibleProvider } from "./openai-base";
 
-export class AzureOpenAIProvider implements LLMProvider {
-  private client: AzureOpenAI;
+/**
+ * Default Azure OpenAI API version.
+ */
+const AZURE_DEFAULT_API_VERSION = "2024-02-15-preview";
 
-  constructor(
-    config: ProviderConfig & { deployment?: string; apiVersion?: string },
-  ) {
+/**
+ * Extended provider configuration for Azure OpenAI.
+ */
+export type AzureOpenAIProviderConfig = ProviderConfig & {
+  /**
+   * Azure OpenAI deployment name.
+   * This is the name you gave your model deployment in Azure.
+   */
+  deployment?: string;
+
+  /**
+   * Azure OpenAI API version.
+   * @default "2024-02-15-preview"
+   */
+  apiVersion?: string;
+};
+
+/**
+ * Azure OpenAI LLM provider.
+ *
+ * Azure OpenAI uses the same API format as OpenAI but requires additional
+ * configuration for the Azure endpoint and deployment. This provider handles
+ * the Azure-specific authentication and endpoint configuration.
+ *
+ * ## Required Configuration
+ *
+ * - `apiKey` - Your Azure OpenAI API key
+ * - `baseUrl` - Your Azure OpenAI endpoint (e.g., "https://my-resource.openai.azure.com")
+ *
+ * ## Optional Configuration
+ *
+ * - `deployment` - The deployment name (if not specified in the model parameter)
+ * - `apiVersion` - API version (defaults to "2024-02-15-preview")
+ *
+ * @example
+ * ```typescript
+ * const provider = new AzureOpenAIProvider({
+ *   type: "azure-openai",
+ *   apiKey: process.env.AZURE_OPENAI_API_KEY,
+ *   baseUrl: process.env.AZURE_OPENAI_ENDPOINT,
+ *   deployment: "my-gpt4-deployment",
+ * });
+ *
+ * const response = await provider.complete(messages, {
+ *   model: "gpt-4", // Or use deployment name
+ *   temperature: 0.7,
+ *   maxTokens: 1000,
+ * });
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // With specific API version
+ * const provider = new AzureOpenAIProvider({
+ *   type: "azure-openai",
+ *   apiKey: process.env.AZURE_OPENAI_API_KEY,
+ *   baseUrl: "https://my-resource.openai.azure.com",
+ *   deployment: "gpt-4-turbo",
+ *   apiVersion: "2024-05-01-preview",
+ * });
+ * ```
+ */
+export class AzureOpenAIProvider extends OpenAICompatibleProvider {
+  // AzureOpenAI is compatible with OpenAI type for our purposes
+  protected client: OpenAI;
+
+  /**
+   * Create a new Azure OpenAI provider instance.
+   *
+   * @param config - Provider configuration
+   * @param config.apiKey - Azure OpenAI API key
+   * @param config.baseUrl - Azure OpenAI endpoint URL (required)
+   * @param config.deployment - Optional deployment name
+   * @param config.apiVersion - Optional API version
+   * @throws Error if baseUrl is not provided
+   */
+  constructor(config: AzureOpenAIProviderConfig) {
+    super();
+
     if (!config.baseUrl) {
-      throw new Error("baseUrl is required for Azure OpenAI");
+      throw new Error(
+        "baseUrl is required for Azure OpenAI. " +
+          "Provide your Azure OpenAI endpoint (e.g., 'https://my-resource.openai.azure.com')",
+      );
     }
 
     this.client = new AzureOpenAI({
       apiKey: config.apiKey,
       endpoint: config.baseUrl,
-      apiVersion: config.apiVersion || "2024-02-15-preview",
+      apiVersion: config.apiVersion || AZURE_DEFAULT_API_VERSION,
       deployment: config.deployment,
-    });
-  }
-
-  async complete(
-    messages: LLMMessage[],
-    config: LLMConfig,
-  ): Promise<LLMResponse> {
-    const azureMessages = messages.map((msg) => {
-      const base: any = {
-        role: msg.role === "tool" ? "tool" : msg.role,
-        content: msg.content,
-      };
-
-      if (msg.toolCalls) {
-        base.tool_calls = msg.toolCalls.map((tc: ToolCallResponse) => ({
-          id: tc.id,
-          type: tc.type,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        }));
-      }
-
-      if (msg.toolCallId) {
-        base.tool_call_id = msg.toolCallId;
-      }
-
-      return base;
-    });
-
-    const response = await this.client.chat.completions.create({
-      model: config.model,
-      messages: azureMessages,
-      temperature: config.temperature,
-      max_tokens: config.maxTokens,
-      top_p: config.topP,
-      tools: config.tools?.map((tool: FunctionDefinition) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.parameters,
-        },
-      })),
-      stream: false,
-    });
-
-    const choice = response.choices[0];
-    const toolCalls = choice.message.tool_calls?.map((tc) => ({
-      id: tc.id,
-      type: "function" as const,
-      function: {
-        name: tc.function.name,
-        arguments: tc.function.arguments,
-      },
-    }));
-
-    return {
-      content: choice.message.content || "",
-      finishReason: choice.finish_reason,
-      toolCalls,
-      usage: response.usage
-        ? {
-            promptTokens: response.usage.prompt_tokens,
-            completionTokens: response.usage.completion_tokens,
-            totalTokens: response.usage.total_tokens,
-          }
-        : undefined,
-    };
-  }
-
-  async *stream(
-    messages: LLMMessage[],
-    config: LLMConfig,
-  ): AsyncIterableIterator<LLMStreamChunk> {
-    const azureMessages = messages.map((msg) => {
-      const base: any = {
-        role: msg.role === "tool" ? "tool" : msg.role,
-        content: msg.content,
-      };
-
-      if (msg.toolCalls) {
-        base.tool_calls = msg.toolCalls.map((tc: ToolCallResponse) => ({
-          id: tc.id,
-          type: tc.type,
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        }));
-      }
-
-      if (msg.toolCallId) {
-        base.tool_call_id = msg.toolCallId;
-      }
-
-      return base;
-    });
-
-    const stream = await this.client.chat.completions.create({
-      model: config.model,
-      messages: azureMessages,
-      temperature: config.temperature,
-      max_tokens: config.maxTokens,
-      top_p: config.topP,
-      stream: true,
-    });
-
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta;
-      if (delta?.content) {
-        yield {
-          content: delta.content,
-          finishReason: chunk.choices[0]?.finish_reason || undefined,
-        };
-      }
-    }
+    }) as unknown as OpenAI;
   }
 }

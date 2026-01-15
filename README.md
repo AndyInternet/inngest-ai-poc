@@ -1,495 +1,522 @@
-# Inngest AI POC
+# Inngest AI Library
 
-An Express.js application with TypeScript and Inngest that provides a comprehensive framework for building AI-powered workflows with multi-provider LLM support, function calling, and declarative flow orchestration.
+A TypeScript library for building **durable AI agent workflows** with [Inngest](https://inngest.com). Build multi-step AI pipelines that automatically retry, checkpoint, and scale.
+
+## Why This Library?
+
+Building production AI agents is hard. You need:
+- **Durability** - What happens when your LLM call fails mid-workflow?
+- **Observability** - How do you debug a 5-step agent pipeline?
+- **Streaming** - How do you show real-time progress to users?
+- **Tool Calling** - How do you let agents use external tools reliably?
+
+This library solves all of these by building on Inngest's durable execution model.
 
 ## Features
 
-- **Express.js + TypeScript** - Type-safe REST API server
-- **Inngest Integration** - Durable workflow execution with built-in retries
-- **Checkpointing Enabled** - Lower latency with client-side step orchestration
-- **Realtime Middleware** - Stream data from functions with publish/subscribe
-- **Multi-Provider LLM Support** - Unified interface for OpenAI, Anthropic, Gemini, Grok, and Azure OpenAI
-- **Streaming Support** - Real-time LLM response streaming across all providers
-- **Function Calling** - Built-in tool execution with pre-call and post-call hooks
-- **Prompt Templating** - Mustache-based prompt hydration with variables
-- **Declarative Flows** - Chain Inngest functions with linear, branching, and conditional transitions
+- **Multi-Provider LLM Support** - OpenAI, Anthropic, Gemini, Grok, Azure OpenAI (all with tool calling)
+- **Automatic Retries** - Failed LLM calls retry automatically
+- **Checkpointing** - Resume workflows from where they left off
+- **Tool Calling** - Pre-call and post-call tools with progress reporting
+- **Agent Pipelines** - Chain agents with lifecycle hooks and error recovery
+- **Human-in-the-Loop** - Pause workflows to ask users questions
+- **Real-time Streaming** - Stream LLM responses via WebSocket
+- **Type Safety** - Full TypeScript support with Zod validation
+- **Comprehensive Validation** - Validate tools, prompts, and pipelines
 
-## Installation
+## Quick Start
+
+### 1. Install Dependencies
 
 ```bash
 npm install
+```
+
+### 2. Set Environment Variables
+
+```env
+ANTHROPIC_API_KEY=sk-ant-...
+# Or use other providers:
+# OPENAI_API_KEY=sk-...
+# GOOGLE_API_KEY=...
+```
+
+### 3. Start Development Servers
+
+```bash
+# Terminal 1: Start Inngest dev server
+npx inngest-cli@latest dev
+
+# Terminal 2: Start your app
+npm run dev
+```
+
+### 4. Build Your First Agent
+
+```typescript
+import { runAgent } from "./ai/agent";
+import { createLLMClient } from "./ai/providers";
+
+export async function myAgent(step, userInput, sessionId) {
+  const provider = await createLLMClient({
+    type: "anthropic",
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+
+  return await runAgent({
+    step,
+    name: "my-agent",
+    provider,
+    prompt: {
+      messages: [
+        { role: "system", content: "You are a helpful assistant." },
+        { role: "user", content: "{{input}}" },
+      ],
+      variables: { input: userInput },
+    },
+    config: {
+      model: "claude-haiku-4-5-20251001",
+      temperature: 0.7,
+      maxTokens: 1000,
+    },
+    streaming: sessionId ? { sessionId } : undefined,
+    fn: (response) => response,
+  });
+}
+```
+
+### 5. Create an Inngest Function
+
+```typescript
+import { inngest } from "./inngest/client";
+import { myAgent } from "./agents";
+
+export const myFunction = inngest.createFunction(
+  { id: "my-ai-workflow" },
+  { event: "ai.workflow.start" },
+  async ({ event, step }) => {
+    const result = await myAgent(step, event.data.input, event.data.sessionId);
+    return { success: true, result };
+  },
+);
+```
+
+### 6. Trigger the Workflow
+
+```typescript
+await inngest.send({
+  name: "ai.workflow.start",
+  data: { input: "Hello, world!", sessionId: "user-123" },
+});
+```
+
+## Core Concepts
+
+### Agents
+
+An agent is a single LLM interaction wrapped in Inngest steps for durability:
+
+```typescript
+const result = await runAgent({
+  step,              // Inngest step tools
+  name: "analyzer",  // Agent name
+  provider,          // LLM provider
+  prompt,            // Templated prompt
+  config,            // Model settings
+  tools,             // Optional tools
+  fn: (r) => r,      // Response transformer
+  maxIterations: 10, // Max tool-calling iterations
+  hooks: {           // Lifecycle hooks
+    onStart: (ctx) => console.log("Started"),
+    onComplete: (ctx, result, metrics) => console.log("Done"),
+  },
+});
+```
+
+### Prompts
+
+Use Mustache templating for dynamic prompts:
+
+```typescript
+import { hydratePrompt, validatePromptVariables } from "./ai/prompt";
+
+const prompt = {
+  messages: [
+    { role: "system", content: "You are a {{role}}." },
+    { role: "user", content: "Analyze: {{data}}" },
+  ],
+  variables: {
+    role: "data analyst",
+    data: "Q4 sales figures",
+  },
+};
+
+// Validate before use
+const validation = validatePromptVariables(prompt);
+if (!validation.valid) {
+  console.warn("Missing:", validation.missing);
+}
+
+// Hydrate with warnings enabled
+const messages = hydratePrompt(prompt, { warnOnMissingVars: true });
+```
+
+### Tools
+
+**Pre-call tools** run before the LLM call to populate prompt variables:
+
+```typescript
+const dateTool = {
+  type: "pre-call",
+  name: "getDate",
+  description: "Get current date",
+  execute: () => ({ today: new Date().toISOString().split("T")[0] }),
+};
+```
+
+**Post-call tools** let the LLM call external functions:
+
+```typescript
+const searchTool = {
+  type: "post-call",
+  name: "search",
+  description: "Search the database",
+  parameters: [
+    { name: "query", type: "string", description: "Search query", required: true },
+  ],
+  execute: async (args, context) => {
+    context?.reportProgress?.("Searching...");
+    return await db.search(args.query);
+  },
+};
+```
+
+**Validate tools** before use:
+
+```typescript
+import { validateTools, ToolValidationError } from "./ai/tools";
+
+try {
+  validateTools(myTools);
+} catch (e) {
+  if (e instanceof ToolValidationError) {
+    console.error("Tool errors:", e.details);
+  }
+}
+```
+
+### Pipelines
+
+Chain multiple agents with lifecycle hooks and error recovery:
+
+```typescript
+import { createAgentPipeline, defineAgent } from "./ai/flow";
+
+const pipeline = createAgentPipeline(
+  {
+    name: "analysis-pipeline",
+    hooks: {
+      onAgentStart: (name, index) => console.log(`Starting ${name}`),
+      onAgentEnd: (name, index, result, ms) => console.log(`${name} done in ${ms}ms`),
+      onAgentError: (error, context) => {
+        console.error(`${error.agentName} failed:`, error.error);
+        // Skip failed agent with fallback result
+        return { action: "skip", result: null };
+      },
+    },
+  },
+  [
+    defineAgent({
+      name: "gather-data",
+      mapInput: (_, ctx) => ({ query: ctx.initialInput.query }),
+      run: gatherDataAgent,
+    }),
+    defineAgent({
+      name: "analyze",
+      mapInput: (_, ctx) => ({
+        data: ctx.results["gather-data"],
+        query: ctx.initialInput.query,
+      }),
+      run: analyzeAgent,
+      // Conditionally skip this agent
+      shouldRun: (prev, ctx) => ctx.initialInput.needsAnalysis,
+      skipResult: { skipped: true },
+    }),
+    defineAgent({
+      name: "report",
+      mapInput: (_, ctx) => ({ analysis: ctx.results["analyze"] }),
+      run: reportAgent,
+    }),
+  ],
+);
+
+// Run the entire pipeline
+const result = await pipeline.run(step, { query: "user request" }, sessionId);
+```
+
+### Human-in-the-Loop
+
+Pause execution to ask users questions:
+
+```typescript
+import { askUser, askUserWithMetadata } from "./ai/questions";
+
+const answers = await askUser(step, {
+  questions: ["What is your budget?", "What's the timeline?"],
+  sessionId: "user-123",
+  stepId: "budget-questions", // Must be deterministic!
+  timeout: "1h",
+  // Notify UI when questions are ready
+  onQuestionsReady: async (questions, sessionId) => {
+    await broadcast(sessionId, { type: "questions", questions });
+  },
+});
+
+// Or get detailed metadata
+const result = await askUserWithMetadata(step, options);
+// result = { answers, complete, unanswered, questions }
+```
+
+### Schema Validation
+
+Validate LLM responses with Zod:
+
+```typescript
+import { z } from "zod";
+
+const ResultSchema = z.object({
+  recommendation: z.enum(["approve", "reject"]),
+  confidence: z.number().min(0).max(1),
+  reasoning: z.string(),
+});
+
+const result = await runAgent({
+  // ...other options
+  resultSchema: ResultSchema,
+  fn: (response) => JSON.parse(response),
+});
+// Result is typed and validated
+```
+
+### Lifecycle Hooks
+
+Monitor agent execution:
+
+```typescript
+const hooks = {
+  onStart: (ctx) => console.log(`${ctx.name} started (run: ${ctx.runId})`),
+  onLLMStart: (ctx, messages) => console.log("LLM call starting"),
+  onLLMEnd: (ctx, response) => console.log("LLM call completed"),
+  onToolStart: (ctx, tool, args) => console.log(`Tool ${tool} starting`),
+  onToolEnd: (ctx, tool, result, ms) => console.log(`Tool ${tool} done in ${ms}ms`),
+  onToolError: (ctx, tool, error) => console.error(`Tool ${tool} failed`),
+  onComplete: (ctx, result, metrics) => console.log("Agent completed", metrics),
+  onError: (ctx, error) => console.error("Agent failed", error),
+};
+```
+
+### Metrics Collection
+
+Track performance metrics:
+
+```typescript
+import { AgentMetricsCollector, formatMetricsSummary } from "./ai/metrics";
+
+// Metrics are automatically collected and passed to onComplete hook
+const hooks = {
+  onComplete: (ctx, result, metrics) => {
+    console.log(formatMetricsSummary(metrics));
+    // "Duration: 1.50s | LLM calls: 2 | Tool calls: 3 (search: 150ms)"
+  },
+};
+```
+
+### Streaming
+
+Manage real-time streaming:
+
+```typescript
+import { globalStreamingManager } from "./ai/streaming";
+
+// Set up broadcaster
+globalStreamingManager.setBroadcaster((sessionId, message) => {
+  websocket.send(sessionId, message);
+});
+
+// Query messages
+const messages = globalStreamingManager.getMessages("session-123");
+```
+
+## LLM Providers
+
+### Supported Providers
+
+| Provider | Type | Tool Calling |
+|----------|------|--------------|
+| OpenAI | `openai` | Full support |
+| Anthropic | `anthropic` | Full support |
+| Google | `gemini` | Full support |
+| xAI | `grok` | Full support |
+| Azure OpenAI | `azure-openai` | Full support |
+
+### Configuration
+
+```typescript
+// OpenAI
+const provider = await createLLMClient({
+  type: "openai",
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// Anthropic
+const provider = await createLLMClient({
+  type: "anthropic",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
+// Gemini
+const provider = await createLLMClient({
+  type: "gemini",
+  apiKey: process.env.GOOGLE_API_KEY,
+});
+
+// Azure OpenAI
+const provider = await createLLMClient({
+  type: "azure-openai",
+  apiKey: process.env.AZURE_OPENAI_API_KEY,
+  baseUrl: process.env.AZURE_OPENAI_ENDPOINT,
+});
+```
+
+## Complete Example
+
+See `src/examples/feature-validation/` for a full working example that demonstrates:
+
+- Multi-agent pipeline (gather context -> analyze -> report)
+- Pre-call and post-call tools
+- Human-in-the-loop questions
+- Zod schema validation
+- Real-time streaming
+- Lifecycle hooks
+- Error recovery
+
+```typescript
+// Run the feature validation pipeline
+const report = await featureValidationPipeline.run(
+  step,
+  {
+    featureDescription: "Add dark mode support",
+    existingContext: "B2B SaaS platform for project management",
+  },
+  sessionId,
+);
 ```
 
 ## Project Structure
 
 ```
 src/
-├── index.ts                    # Express server entry point
-├── inngest/
-│   ├── client.ts              # Inngest client instance
-│   └── functions.ts           # Inngest functions array
-└── ai/
-    ├── agent.ts               # AI agent wrapper with step.run integration
-    ├── prompt.ts              # Prompt templating system
-    ├── tools.ts               # Pre-call and post-call tool definitions
-    ├── flow.ts                # Flow orchestration for chaining functions
-    └── providers/
-        ├── index.ts           # LLM provider interface and factory
-        ├── openai.ts          # OpenAI provider implementation
-        ├── anthropic.ts       # Anthropic provider implementation
-        ├── gemini.ts          # Google Gemini provider implementation
-        ├── grok.ts            # Grok (xAI) provider implementation
-        └── azure-openai.ts    # Azure OpenAI provider implementation
+├── ai/
+│   ├── agent.ts        # runAgent() - core execution
+│   ├── streaming.ts    # StreamingManager class
+│   ├── metrics.ts      # AgentMetricsCollector class
+│   ├── flow.ts         # Pipelines, hooks, transitions
+│   ├── prompt.ts       # Mustache templating + validation
+│   ├── questions.ts    # Human-in-the-loop
+│   ├── tools.ts        # Tool utilities + validation
+│   ├── types.ts        # TypeScript types
+│   └── providers/
+│       ├── index.ts        # Factory function
+│       ├── openai-base.ts  # Base class for OpenAI-compatible
+│       ├── openai.ts       # OpenAI provider
+│       ├── anthropic.ts    # Anthropic provider
+│       ├── gemini.ts       # Google Gemini provider
+│       ├── grok.ts         # xAI Grok provider
+│       └── azure-openai.ts # Azure OpenAI provider
+├── examples/
+│   └── feature-validation/  # Complete example
+└── inngest/
+    ├── client.ts       # Inngest client
+    └── functions.ts    # Function registry
 ```
-
-## Architecture Principles
-
-This framework follows an **Inngest-first** architecture:
-
-### Core Principles
-
-1. **All LLM calls wrapped in `step.run()`** - The `runAgent()` function automatically wraps everything
-2. **Functions orchestrated by Inngest** - Use `step.invoke()` to call between functions
-3. **Flows use Inngest primitives** - `executeTransition()` wraps `step.invoke()` and `step.sendEvent()`
-4. **Event-driven workflows** - Trigger workflows with Inngest events
-5. **Durable execution** - Automatic retries, checkpointing, and observability
-
-### Why This Matters
-
-✅ **Durability** - Functions retry automatically, workflows resume from failures  
-✅ **Low Latency** - Checkpointing executes steps immediately on client-side  
-✅ **Realtime Updates** - Stream data from functions with publish/subscribe  
-✅ **Observability** - See every step in Inngest dashboard  
-✅ **Scalability** - Functions run independently and auto-scale  
-✅ **Type Safety** - Full TypeScript support with typed return values  
-✅ **Testability** - Each function can be tested in isolation  
-
-## Quick Start
-
-### 1. Start Inngest Dev Server
-
-```bash
-npx inngest-cli@latest dev
-```
-
-This starts the Inngest dev server at `http://localhost:8288` for local development and testing.
-
-### 2. Start the Development Server
-
-```bash
-npm run dev
-```
-
-The server runs on `http://localhost:3000` with the Inngest endpoint at `/api/inngest`.
-
-### 3. Production Build
-
-```bash
-npm run build
-npm start
-```
-
-## Core Components
-
-### LLM Providers
-
-Unified interface for multiple LLM providers with streaming and function calling support.
-
-#### Creating a Provider
-
-```typescript
-import { createLLMClient } from './ai/providers';
-
-const provider = await createLLMClient({
-  type: 'openai',
-  apiKey: process.env.OPENAI_API_KEY,
-});
-```
-
-#### Supported Providers
-
-- **OpenAI** - GPT-4, GPT-3.5, etc.
-- **Anthropic** - Claude models
-- **Gemini** - Google's Gemini models
-- **Grok** - xAI's Grok models
-- **Azure OpenAI** - Azure-hosted OpenAI models
-
-#### Provider Interface
-
-```typescript
-interface LLMProvider {
-  complete(messages: LLMMessage[], config: LLMConfig): Promise<LLMResponse>;
-  stream(messages: LLMMessage[], config: LLMConfig): AsyncIterableIterator<LLMStreamChunk>;
-}
-```
-
-### Prompt Templating
-
-Create templated prompts with Mustache variables that get hydrated at runtime.
-
-```typescript
-import { hydratePrompt, Prompt } from './ai/prompt';
-
-const prompt: Prompt = {
-  messages: [
-    { role: 'system', content: 'You are a {{role}}' },
-    { role: 'user', content: 'Analyze {{data}}' }
-  ],
-  variables: {
-    role: 'data analyst',
-    data: 'sales figures for Q4'
-  }
-};
-
-const messages = hydratePrompt(prompt);
-// Results in:
-// [
-//   { role: 'system', content: 'You are a data analyst' },
-//   { role: 'user', content: 'Analyze sales figures for Q4' }
-// ]
-```
-
-### AI Agent with Tools
-
-The `runAgent()` function wraps all LLM interactions in `step.run()` automatically, ensuring durable execution within Inngest functions.
-
-```typescript
-import { runAgent } from './ai/agent';
-import { createLLMClient } from './ai/providers';
-
-const result = await runAgent({
-  step,
-  name: 'analyze-data',
-  provider: await createLLMClient({ type: 'openai', apiKey: '...' }),
-  prompt: {
-    messages: [
-      { role: 'system', content: 'You are a data analyst' },
-      { role: 'user', content: 'Analyze {{data}}' }
-    ],
-    variables: {
-      data: 'Q4 sales data',
-      currentTime: '2024-01-15' // Can be populated by pre-call tools
-    }
-  },
-  config: {
-    model: 'gpt-4',
-    temperature: 0.7,
-    maxTokens: 1000
-  },
-  tools: [
-    // Pre-call tool: runs before LLM call to hydrate prompt variables
-    {
-      type: 'pre-call',
-      name: 'getCurrentTime',
-      description: 'Gets the current time',
-      execute: async () => ({ currentTime: new Date().toISOString() })
-    },
-    // Post-call tool: LLM can call this during execution
-    {
-      type: 'post-call',
-      name: 'queryDatabase',
-      description: 'Query the database for information',
-      parameters: [
-        { name: 'query', type: 'string', description: 'SQL query', required: true }
-      ],
-      execute: async (args) => {
-        // Execute database query
-        return { rows: [] };
-      }
-    }
-  ],
-  fn: (response) => {
-    // Process the LLM response
-    return JSON.parse(response);
-  }
-});
-```
-
-### Tools System
-
-#### Pre-Call Tools
-
-Execute before the LLM call to populate prompt variables dynamically.
-
-```typescript
-const preCallTool: PreCallTool = {
-  type: 'pre-call',
-  name: 'fetchUserData',
-  description: 'Fetch user data from database',
-  execute: async () => {
-    const user = await db.getUser();
-    return {
-      userName: user.name,
-      userEmail: user.email
-    };
-  }
-};
-```
-
-#### Post-Call Tools
-
-LLM can invoke these tools during execution (function calling).
-
-```typescript
-const postCallTool: PostCallTool = {
-  type: 'post-call',
-  name: 'sendEmail',
-  description: 'Send an email to a recipient',
-  parameters: [
-    { name: 'to', type: 'string', description: 'Email recipient', required: true },
-    { name: 'subject', type: 'string', description: 'Email subject', required: true },
-    { name: 'body', type: 'string', description: 'Email body', required: true }
-  ],
-  execute: async (args) => {
-    await emailService.send(args.to, args.subject, args.body);
-    return { success: true, messageId: '123' };
-  }
-};
-```
-
-The agent automatically handles the function calling loop:
-1. LLM requests a tool call
-2. Tool is executed with provided arguments
-3. Result is sent back to LLM
-4. Loop continues until LLM provides final response (max 10 iterations)
-
-### Flow Orchestration
-
-The flow system provides helpers to orchestrate Inngest functions using `step.invoke()` and `step.sendEvent()` with declarative transitions.
-
-#### Defining a Flow
-
-```typescript
-import {
-  defineFlow,
-  createFlowNode,
-  eventTrigger,
-  invokeTrigger,
-  linearTransition,
-  branchTransition,
-  conditionalTransition
-} from './ai/flow';
-
-const flow = defineFlow({
-  id: 'order-processing-flow',
-  nodes: [
-    // Entry point: triggered by event
-    createFlowNode({
-      id: 'validate-order',
-      trigger: eventTrigger('order.received'),
-      handler: async (input, step) => {
-        const isValid = validateOrder(input.order);
-        return { valid: isValid, order: input.order };
-      },
-      transition: conditionalTransition(
-        [
-          { condition: (result) => !result.valid, to: 'handle-invalid-order' },
-          { condition: (result) => result.order.total > 1000, to: 'vip-processing' }
-        ],
-        'standard-processing' // default
-      )
-    }),
-
-    // Linear transition: 1 -> 1
-    createFlowNode({
-      id: 'standard-processing',
-      trigger: invokeTrigger('validate-order'),
-      handler: async (input, step) => {
-        const processed = await processOrder(input.order);
-        return { orderId: processed.id, ...processed };
-      },
-      transition: linearTransition('send-confirmation')
-    }),
-
-    // Branch transition: 1 -> many
-    createFlowNode({
-      id: 'vip-processing',
-      trigger: invokeTrigger('validate-order'),
-      handler: async (input, step) => {
-        const processed = await processVIPOrder(input.order);
-        return { orderId: processed.id, ...processed };
-      },
-      transition: branchTransition(['send-confirmation', 'notify-account-manager', 'update-crm'])
-    }),
-
-    // Terminal nodes
-    createFlowNode({
-      id: 'send-confirmation',
-      trigger: invokeTrigger('standard-processing'),
-      handler: async (input, step) => {
-        await sendEmail(input.order.email, 'Order Confirmed');
-        return { sent: true };
-      }
-    }),
-
-    createFlowNode({
-      id: 'handle-invalid-order',
-      trigger: invokeTrigger('validate-order'),
-      handler: async (input, step) => {
-        await logError('Invalid order', input.order);
-        return { handled: true };
-      }
-    })
-  ]
-});
-```
-
-#### Flow Triggers
-
-**Event Trigger** - Listen for Inngest events:
-```typescript
-trigger: eventTrigger('order.received')
-```
-
-**Invoke Trigger** - Called directly from another function:
-```typescript
-trigger: invokeTrigger('validate-order')
-```
-
-#### Flow Transitions
-
-**Linear (1:1)** - Move to single next node:
-```typescript
-transition: linearTransition('next-step')
-```
-
-**Branch (1:many)** - Trigger multiple nodes:
-```typescript
-transition: branchTransition(['step-a', 'step-b', 'step-c'])
-```
-
-**Conditional** - Route based on result:
-```typescript
-transition: conditionalTransition(
-  [
-    { condition: (result) => result.score >= 90, to: 'handle-excellent' },
-    { condition: (result) => result.score >= 70, to: 'handle-good' },
-    { condition: (result) => result.score >= 50, to: 'handle-passing' }
-  ],
-  'handle-failing' // default if no conditions match
-)
-```
-
-Conditions are evaluated in order, and the first matching condition determines the next step.
 
 ## API Reference
 
-### `runAgent<TResult>(params: RunAgentParams<TResult>): Promise<TResult>`
+### `runAgent<T>(params): Promise<T>`
 
-Execute an LLM call within an Inngest step with tool support.
+Execute an LLM call with full durability.
 
-**Parameters:**
-- `step` - Inngest step tools
-- `name` - Step name for Inngest logs
-- `provider` - LLM provider instance
-- `prompt` - Prompt with messages and variables
-- `config` - LLM configuration (model, temperature, etc.)
-- `tools` - Optional array of pre-call and post-call tools
-- `fn` - Function to process the LLM response and return result
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `step` | `StepTools` | Yes | Inngest step tools |
+| `name` | `string` | Yes | Agent name |
+| `provider` | `LLMProvider` | Yes | LLM provider instance |
+| `prompt` | `Prompt` | Yes | Templated prompt |
+| `config` | `LLMConfig` | Yes | Model configuration |
+| `fn` | `(response: string) => T` | Yes | Response transformer |
+| `tools` | `Tool[]` | No | Pre-call and post-call tools |
+| `streaming` | `StreamingConfig` | No | Streaming configuration |
+| `metadata` | `AgentMetadata` | No | UI metadata |
+| `resultSchema` | `ZodType<T>` | No | Result validation schema |
+| `hooks` | `AgentHooks<T>` | No | Lifecycle hooks |
+| `maxIterations` | `number` | No | Max tool loop iterations (default: 10) |
+| `runId` | `string` | No | Deterministic run ID |
 
-### `createLLMClient(config: ProviderConfig): Promise<LLMProvider>`
+### `createLLMClient(config): Promise<LLMProvider>`
 
 Create an LLM provider instance.
 
-**Config:**
-- `type` - Provider type: 'openai' | 'anthropic' | 'gemini' | 'grok' | 'azure-openai'
-- `apiKey` - API key for the provider
-- `baseUrl` - Optional base URL override
-- `organizationId` - Optional organization ID (OpenAI)
+### `createAgentPipeline(config, agents): AgentPipeline`
 
-### `hydratePrompt(prompt: Prompt): LLMMessage[]`
+Create a sequential agent pipeline with hooks.
 
-Hydrate a prompt template with variables using Mustache.
+### `defineAgent(config): AgentDefinition`
 
-### `defineFlow(config): Flow`
+Define an agent for use in pipelines.
 
-Create a flow definition with multiple nodes.
+### `validatePipeline(config, agents): PipelineValidationResult`
 
-### `createFlowNode<TInput, TOutput>(config): FlowNode`
+Validate pipeline configuration.
 
-Define a single node in a flow.
+### `askUser(step, options): Promise<Record<string, string>>`
 
-### `executeTransition(step, transition, result, functionRefs): Promise<void>`
+Pause workflow to ask user questions.
 
-Execute a flow transition based on type (linear, branch, conditional).
+### `askUserWithMetadata(step, options): Promise<AskUserResult>`
 
-## Environment Variables
+Ask questions with detailed result metadata.
 
-```env
-PORT=3000
+### `runAgentsInParallel(step, agents, input, sessionId): Promise<Results>`
 
-# LLM Provider API Keys
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=...
-XAI_API_KEY=...
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_ENDPOINT=https://...
+Execute multiple agents concurrently.
 
-# Inngest
-INNGEST_EVENT_KEY=...
-INNGEST_SIGNING_KEY=...
-```
+### `validateTools(tools, options): ValidateToolsResult`
+
+Validate tool array for common issues.
+
+### `hydratePrompt(prompt, options): LLMMessage[]`
+
+Render prompt template with variables.
+
+### `validatePromptVariables(prompt): ValidationResult`
+
+Check for missing prompt variables.
 
 ## Development
 
-### Scripts
-
-- `npm run dev` - Start development server with hot reload
-- `npm run build` - Build TypeScript to JavaScript
-- `npm start` - Run production build
-
-### Type Checking
-
 ```bash
+# Start dev server with hot reload
+npm run dev
+
+# Type check
 npx tsc --noEmit
+
+# Build for production
+npm run build
+
+# Start production server
+npm start
 ```
-
-## Architecture
-
-### Inngest Integration
-
-The application uses Inngest for durable workflow execution with enhanced features:
-
-#### Checkpointing
-Enabled globally (`checkpointing: true`) for dramatically lower latency. Steps execute immediately on the client-side instead of waiting for server round-trips. This is especially important for AI workflows where multiple LLM calls happen in sequence.
-
-#### Realtime Middleware
-The `realtimeMiddleware()` enables streaming data from functions using publish/subscribe patterns. This allows:
-- Real-time updates to clients as workflows progress
-- Streaming LLM responses through Inngest functions
-- Live status updates for long-running operations
-
-The `/api/inngest` endpoint serves the Inngest functions and handles event-driven execution with built-in retries and observability.
-
-### Step Tools
-
-All AI operations are wrapped in Inngest steps (`step.run`, `step.invoke`, `step.sendEvent`) to ensure durability and proper retry handling.
-
-### Provider Architecture
-
-The provider system uses a unified interface allowing you to swap LLM providers without changing application code. Each provider handles its own message format conversion and function calling protocol.
-
-### Tool Execution Loop
-
-The agent implements an agentic loop where:
-1. Pre-call tools execute and populate prompt variables
-2. Prompt is hydrated with all variables
-3. LLM is called with tool definitions
-4. If LLM requests tools, they execute and results return to LLM
-5. Loop continues until LLM provides final response
-
-### Flow Execution
-
-Flows use `step.invoke()` for direct function calls (when function references are available) or fall back to events for loose coupling between services.
-
-## Examples
-
-See the `examples/` directory for complete examples:
-- Basic LLM usage
-- Tool calling examples
-- Flow orchestration patterns
-- Multi-step agent workflows
 
 ## License
 

@@ -96,9 +96,19 @@ export type PromptMessage = {
   content: string;
 };
 
+/**
+ * A prompt template with messages and variables for hydration.
+ *
+ * Variables are substituted into message content using Mustache syntax ({{variableName}}).
+ * Values are coerced to strings during hydration - objects will be JSON.stringify'd.
+ */
 export type Prompt = {
   messages: PromptMessage[];
-  variables: Record<string, string>;
+  /**
+   * Variables to substitute into the prompt messages.
+   * Accepts any JSON-serializable value - objects and arrays will be stringified.
+   */
+  variables: Record<string, unknown>;
 };
 
 // =============================================================================
@@ -287,9 +297,23 @@ export type AskUserOptions = {
 /**
  * Agent definition for use in pipelines.
  * Wraps an agent function with metadata for orchestration.
+ *
+ * @typeParam TInput - The input type this agent expects
+ * @typeParam TOutput - The output type this agent produces
+ * @typeParam TPreviousOutput - The output type from the previous agent (for mapInput)
+ * @typeParam TPipelineInput - The initial input type to the pipeline
+ * @typeParam TPipelineResults - Record of all previous agent results in the pipeline
  */
-export type AgentDefinition<TInput = any, TOutput = any> = {
+export type AgentDefinition<
+  TInput = unknown,
+  TOutput = unknown,
+  TPreviousOutput = unknown,
+  TPipelineInput = unknown,
+  TPipelineResults extends Record<string, unknown> = Record<string, unknown>,
+> = {
+  /** Unique name for this agent within the pipeline */
   name: string;
+  /** Human-readable description of what this agent does */
   description?: string;
   /**
    * The agent function to execute.
@@ -307,18 +331,31 @@ export type AgentDefinition<TInput = any, TOutput = any> = {
   /**
    * Optional function to transform the previous agent's output
    * into this agent's input format.
+   *
+   * @param previousOutput - The output from the previous agent in the pipeline
+   * @param context - Pipeline context with initial input and all previous results
+   * @returns The input for this agent
    */
-  mapInput?: (previousOutput: any, context: PipelineContext) => TInput;
+  mapInput?: (
+    previousOutput: TPreviousOutput,
+    context: PipelineContext<TPipelineInput, TPipelineResults>,
+  ) => TInput;
 };
 
 /**
  * Context passed through the pipeline, accumulating results from each agent.
+ *
+ * @typeParam TInput - The type of the initial input to the pipeline
+ * @typeParam TResults - A record type mapping agent names to their output types
  */
-export type PipelineContext = {
+export type PipelineContext<
+  TInput = unknown,
+  TResults extends Record<string, unknown> = Record<string, unknown>,
+> = {
   /** Original input to the pipeline */
-  initialInput: any;
+  initialInput: TInput;
   /** Results from each agent, keyed by agent name */
-  results: Record<string, any>;
+  results: TResults;
   /** Session ID for streaming */
   sessionId?: string;
 };
@@ -335,12 +372,20 @@ export type PipelineConfig = {
 
 /**
  * An executable pipeline of agents.
+ *
+ * @typeParam TInput - The input type for the pipeline (first agent's input)
+ * @typeParam TOutput - The output type from the pipeline (last agent's output)
  */
 export type AgentPipeline<TInput, TOutput> = {
   /** Pipeline configuration */
   config: PipelineConfig;
-  /** Ordered list of agents in the pipeline */
-  agents: AgentDefinition[];
+  /**
+   * Ordered list of agents in the pipeline.
+   * Each agent can have its own input/output types - the pipeline handles
+   * type transformations via each agent's mapInput function.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  agents: readonly AgentDefinition<any, any, any, TInput, any>[];
   /**
    * Execute the pipeline with the given input.
    * Each agent runs in sequence, with results passed to the next agent.
@@ -348,20 +393,31 @@ export type AgentPipeline<TInput, TOutput> = {
   run: (step: StepTools, input: TInput, sessionId?: string) => Promise<TOutput>;
 };
 
-export type FlowTransition =
+/**
+ * Defines how to transition between agents/functions in a flow.
+ *
+ * @typeParam TResult - The type of result passed to conditional branch functions
+ */
+export type FlowTransition<TResult = unknown> =
   | {
       type: "linear";
+      /** The target agent/function name to transition to */
       to: string;
     }
   | {
       type: "branch";
+      /** Array of target agent/function names to transition to in parallel */
       to: string[];
     }
   | {
       type: "conditional";
+      /** Branches evaluated in order - first matching condition wins */
       branches: Array<{
-        condition: (result: any) => boolean;
+        /** Predicate function to determine if this branch should be taken */
+        condition: (result: TResult) => boolean;
+        /** The target agent/function name if condition returns true */
         to: string;
       }>;
+      /** Default target if no conditions match */
       default?: string;
     };

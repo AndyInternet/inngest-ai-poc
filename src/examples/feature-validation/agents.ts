@@ -1,42 +1,49 @@
-import { runAgent, streamingMessages } from "../../ai/agent";
+/**
+ * Feature Validation Agents
+ *
+ * This file defines the AI agents for the feature validation pipeline:
+ * 1. gather-context: Determines if enough context exists, asks questions if needed
+ * 2. analyze-feature: Evaluates the feature across multiple dimensions
+ * 3. generate-report: Creates a comprehensive validation report
+ *
+ * Each agent demonstrates key patterns:
+ * - Using runAgent with Zod schema validation
+ * - Tool calling (pre-call and post-call)
+ * - Lifecycle hooks for observability
+ * - Human-in-the-loop with askUser
+ *
+ * @module feature-validation/agents
+ */
+
+// ============================================================================
+// Imports
+// ============================================================================
+
 import type {
   AgentMetadata,
   AgentHooks,
   AgentContext,
   AgentMetrics,
   StepTools,
-  PipelineContext,
   LLMMessage,
+  LLMProvider,
 } from "../../ai/types";
+import type {
+  PipelineHooks,
+  PipelineError,
+  ErrorRecoveryResult,
+} from "../../ai/flow";
+import { runAgent } from "../../ai/agent";
 import { createLLMClient } from "../../ai/providers";
-import { askUser } from "../../ai/questions";
+import { askUser, formatAnswersAsContext } from "../../ai/questions";
 import { createAgentPipeline, defineAgent } from "../../ai/flow";
+import { validateTools } from "../../ai/tools";
+import {
+  globalStreamingManager,
+  createQuestionsMessage,
+} from "../../ai/streaming";
+import { formatMetricsSummary } from "../../ai/metrics";
 
-// Helper to add streaming messages (imported from agent.ts pattern)
-function addStreamingMessage(sessionId: string, message: any) {
-  const messageWithTimestamp = {
-    ...message,
-    timestamp: Date.now(),
-  };
-
-  if (!streamingMessages.has(sessionId)) {
-    streamingMessages.set(sessionId, []);
-  }
-  streamingMessages.get(sessionId)!.push(messageWithTimestamp);
-
-  // Broadcast to WebSocket clients
-  try {
-    import("../../index")
-      .then((module) => {
-        if (module.broadcastToSession) {
-          module.broadcastToSession(sessionId, messageWithTimestamp);
-        }
-      })
-      .catch(() => {});
-  } catch {
-    // Ignore errors
-  }
-}
 import {
   GatherContextResultSchema,
   AnalyzeFeatureResultSchema,
@@ -54,45 +61,116 @@ import {
   type FeatureValidationInput,
 } from "./schemas";
 
-// Standardized metadata for workflow step tracking
+import {
+  gatherContextPrompt,
+  gatherContextFinalPrompt,
+  analyzeFeaturePrompt,
+  generateReportPrompt,
+} from "./prompts";
+
+import {
+  getCurrentDateTool,
+  searchKnowledgeBaseTool,
+  estimateComplexityTool,
+  allTools,
+} from "./tools";
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/**
+ * Get the Anthropic API key from environment.
+ * Throws a helpful error if not configured.
+ */
+function getAnthropicApiKey(): string {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "ANTHROPIC_API_KEY environment variable is required. " +
+        "Please set it in your .env file.",
+    );
+  }
+  return apiKey;
+}
+
+/**
+ * Default model configuration for all agents.
+ */
+const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
+
+/**
+ * Cached LLM provider instance.
+ * Reusing the provider avoids creating multiple client instances.
+ */
+let cachedProvider: LLMProvider | null = null;
+
+/**
+ * Get or create the LLM provider.
+ */
+async function getProvider(): Promise<LLMProvider> {
+  if (!cachedProvider) {
+    cachedProvider = await createLLMClient({
+      type: "anthropic",
+      apiKey: getAnthropicApiKey(),
+    });
+  }
+  return cachedProvider;
+}
+
+// ============================================================================
+// Agent Metadata
+// ============================================================================
+
+/**
+ * Metadata for each agent, used for UI display and tracking.
+ */
 const AGENT_METADATA: Record<string, AgentMetadata> = {
   "gather-context": {
     workflowStep: "context",
     displayName: "Context Gathering",
-    icon: "🔍",
-    description: "Analyzing your requirements and gathering context",
+    icon: "search",
+    description: "Analyzing requirements and gathering context",
   },
   "analyze-feature": {
     workflowStep: "analysis",
     displayName: "Feature Analysis",
-    icon: "⚙️",
+    icon: "chart",
     description: "Evaluating feasibility, impact, and strategic alignment",
   },
   "generate-report": {
     workflowStep: "report",
     displayName: "Report Generation",
-    icon: "📄",
+    icon: "document",
     description: "Creating comprehensive validation report",
   },
 };
+
 // ============================================================================
-// Example Lifecycle Hooks - Demonstrate agent observability
+// Lifecycle Hooks
 // ============================================================================
 
 /**
- * Creates lifecycle hooks for logging and observability.
+ * Create logging hooks for agent observability.
+ *
  * These hooks log agent lifecycle events and can be extended
  * for custom telemetry, APM integration, or debugging.
+ *
+ * @example
+ * ```typescript
+ * const hooks = createLoggingHooks<MyResult>();
+ * await runAgent({ ...config, hooks });
+ * ```
  */
 export function createLoggingHooks<TResult = unknown>(): AgentHooks<TResult> {
   return {
     onStart: async (ctx: AgentContext) => {
-      console.log(`[${ctx.name}] Agent started (run: ${ctx.runId})`);
+      console.log(`[${ctx.name}] Started (run: ${ctx.runId})`);
     },
 
     onLLMStart: async (ctx: AgentContext, messages: LLMMessage[]) => {
       console.log(
-        `[${ctx.name}] LLM call starting (iteration: ${ctx.iteration}, messages: ${messages.length})`,
+        `[${ctx.name}] LLM call #${ctx.iteration} starting (${messages.length} messages)`,
       );
     },
 
@@ -101,7 +179,8 @@ export function createLoggingHooks<TResult = unknown>(): AgentHooks<TResult> {
       response: { content: string; hasToolCalls: boolean },
     ) => {
       console.log(
-        `[${ctx.name}] LLM call completed (hasToolCalls: ${response.hasToolCalls}, content length: ${response.content.length})`,
+        `[${ctx.name}] LLM call #${ctx.iteration} completed ` +
+          `(hasToolCalls: ${response.hasToolCalls})`,
       );
     },
 
@@ -110,7 +189,7 @@ export function createLoggingHooks<TResult = unknown>(): AgentHooks<TResult> {
       tool: string,
       args: Record<string, unknown>,
     ) => {
-      console.log(`[${ctx.name}] Tool starting: ${tool}`, args);
+      console.log(`[${ctx.name}] Tool ${tool} starting`, args);
     },
 
     onToolEnd: async (
@@ -119,11 +198,11 @@ export function createLoggingHooks<TResult = unknown>(): AgentHooks<TResult> {
       _result: unknown,
       durationMs: number,
     ) => {
-      console.log(`[${ctx.name}] Tool completed: ${tool} (${durationMs}ms)`);
+      console.log(`[${ctx.name}] Tool ${tool} completed (${durationMs}ms)`);
     },
 
     onToolError: async (ctx: AgentContext, tool: string, error: Error) => {
-      console.error(`[${ctx.name}] Tool error: ${tool}`, error.message);
+      console.error(`[${ctx.name}] Tool ${tool} failed:`, error.message);
     },
 
     onComplete: async (
@@ -131,77 +210,83 @@ export function createLoggingHooks<TResult = unknown>(): AgentHooks<TResult> {
       _result: TResult,
       metrics: AgentMetrics,
     ) => {
-      console.log(`[${ctx.name}] Agent completed successfully`, {
-        totalDurationMs: metrics.totalDurationMs,
-        llmCalls: metrics.llmCalls,
-        toolCalls: metrics.toolCalls,
-        toolDurations: metrics.toolDurations,
-      });
+      console.log(`[${ctx.name}] Completed - ${formatMetricsSummary(metrics)}`);
     },
 
     onError: async (ctx: AgentContext, error: Error) => {
-      console.error(`[${ctx.name}] Agent failed:`, error.message);
+      console.error(`[${ctx.name}] Failed:`, error.message);
     },
   };
 }
 
 /**
- * Creates hooks that track metrics for external monitoring systems.
- * This is an example of how hooks can be used for APM integration.
+ * Create pipeline hooks for observability.
+ *
+ * @example
+ * ```typescript
+ * const hooks = createPipelineHooks();
+ * const pipeline = createAgentPipeline({ name: "...", hooks }, agents);
+ * ```
  */
-export function createMetricsHooks<TResult = unknown>(
-  onMetrics: (agentName: string, metrics: AgentMetrics) => void,
-): AgentHooks<TResult> {
+export function createPipelineHooks<
+  TInput = unknown,
+  TOutput = unknown,
+>(): PipelineHooks<TInput, TOutput> {
   return {
-    onComplete: async (
-      ctx: AgentContext,
-      _result: TResult,
-      metrics: AgentMetrics,
-    ) => {
-      onMetrics(ctx.name, metrics);
+    onPipelineStart: async (input: TInput, sessionId?: string) => {
+      console.log(`[Pipeline] Started (session: ${sessionId || "none"})`);
     },
-    onError: async (ctx: AgentContext, error: Error) => {
-      // Report error metrics
-      onMetrics(ctx.name, {
-        totalDurationMs: 0,
-        llmCalls: 0,
-        toolCalls: 0,
-        toolDurations: {},
-      });
-      console.error(`Agent ${ctx.name} error:`, error.message);
+
+    onAgentStart: async (agentName: string, agentIndex: number) => {
+      console.log(`[Pipeline] Agent ${agentIndex + 1}: ${agentName} starting`);
+    },
+
+    onAgentEnd: async (
+      agentName: string,
+      agentIndex: number,
+      _result: unknown,
+      durationMs: number,
+    ) => {
+      console.log(
+        `[Pipeline] Agent ${agentIndex + 1}: ${agentName} completed (${durationMs}ms)`,
+      );
+    },
+
+    onAgentError: async (
+      error: PipelineError,
+    ): Promise<ErrorRecoveryResult | undefined> => {
+      console.error(
+        `[Pipeline] Agent ${error.agentName} failed:`,
+        error.error.message,
+      );
+      // Re-throw errors by default
+      return { action: "throw" };
+    },
+
+    onPipelineEnd: async (_result: TOutput, totalDurationMs: number) => {
+      console.log(`[Pipeline] Completed (${totalDurationMs}ms total)`);
+    },
+
+    onPipelineError: async (error: Error) => {
+      console.error(`[Pipeline] Failed:`, error.message);
     },
   };
 }
 
-import {
-  gatherContextPrompt,
-  analyzeFeaturePrompt,
-  generateReportPrompt,
-} from "./prompts";
-import {
-  getCurrentDateTool,
-  searchKnowledgeBaseTool,
-  estimateComplexityTool,
-} from "./tools";
-
-const getAnthropicApiKey = () => {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "ANTHROPIC_API_KEY environment variable is required. Please set it in your .env file.",
-    );
-  }
-  return apiKey;
-};
+// ============================================================================
+// Utility Functions
+// ============================================================================
 
 /**
- * Robustly parse JSON from LLM response.
- * Handles markdown code blocks and extracts JSON even if there's extra text.
+ * Parse JSON from LLM response, handling markdown code blocks.
+ *
+ * LLMs often wrap JSON in markdown code blocks. This function
+ * handles that and provides helpful error messages on failure.
  */
-function parseJsonResponse(response: string): any {
+function parseJsonResponse<T>(response: string): T {
   let cleanResponse = response.trim();
 
-  // Strip markdown code blocks if present
+  // Strip markdown code blocks
   if (cleanResponse.startsWith("```json")) {
     cleanResponse = cleanResponse.replace(/^```json\s*\n?/, "");
   }
@@ -212,28 +297,69 @@ function parseJsonResponse(response: string): any {
     cleanResponse = cleanResponse.replace(/\n?```\s*$/, "");
   }
 
-  // Try to parse directly first
+  // Try direct parse
   try {
     return JSON.parse(cleanResponse);
   } catch {
-    // If that fails, try to extract JSON object or array
+    // Try to extract JSON from response
     const jsonMatch = cleanResponse.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
     if (jsonMatch) {
       try {
         return JSON.parse(jsonMatch[1]);
       } catch {
-        // If extraction also fails, throw with context
-        throw new Error(
-          `Failed to parse JSON from response. First 500 chars: ${cleanResponse.substring(0, 500)}`,
-        );
+        // Fall through to error
       }
     }
     throw new Error(
-      `No JSON found in response. First 500 chars: ${cleanResponse.substring(0, 500)}`,
+      `Failed to parse JSON from response. Content: ${cleanResponse.substring(0, 200)}...`,
     );
   }
 }
 
+/**
+ * Broadcast a questions message to the streaming session.
+ *
+ * Sends a questions message to the UI for human-in-the-loop interactions.
+ * The UI listens for messages with type="questions" to display
+ * question prompts to the user.
+ */
+function broadcastQuestionsToSession(
+  sessionId: string,
+  questions: string[],
+  agentName: string,
+  metadata?: AgentMetadata,
+): void {
+  globalStreamingManager.addMessage(
+    sessionId,
+    createQuestionsMessage(
+      agentName,
+      questions,
+      "The AI needs more information to continue.",
+      metadata,
+    ),
+  );
+}
+
+// ============================================================================
+// Individual Agent Functions
+// ============================================================================
+
+/**
+ * Gather context about a feature request.
+ *
+ * This agent:
+ * 1. Analyzes existing context
+ * 2. Determines if more information is needed
+ * 3. Asks clarifying questions if needed (human-in-the-loop)
+ * 4. Returns a summary of gathered context
+ *
+ * @param step - Inngest step tools
+ * @param featureDescription - The feature to evaluate
+ * @param existingContext - Any existing context
+ * @param sessionId - Optional session ID for streaming
+ * @param hooks - Optional lifecycle hooks
+ * @returns Context gathering result with reasoning and summary
+ */
 export async function gatherContextAgent(
   step: StepTools,
   featureDescription: string,
@@ -241,19 +367,20 @@ export async function gatherContextAgent(
   sessionId?: string,
   hooks?: AgentHooks<GatherContextResult>,
 ): Promise<GatherContextResult> {
+  const provider = await getProvider();
   const agentHooks = hooks ?? createLoggingHooks<GatherContextResult>();
 
-  // First run: allow questions
+  // Validate tools before use
+  validateTools([getCurrentDateTool, searchKnowledgeBaseTool]);
+
+  // First pass: analyze context and potentially ask questions
   const firstResult = await runAgent<GatherContextResult>({
     step,
     name: "gather-context",
-    provider: await createLLMClient({
-      type: "anthropic",
-      apiKey: getAnthropicApiKey(),
-    }),
+    provider,
     prompt: gatherContextPrompt(featureDescription, existingContext),
     config: {
-      model: "claude-haiku-4-5-20251001",
+      model: DEFAULT_MODEL,
       temperature: 0.7,
       maxTokens: 2000,
     },
@@ -262,10 +389,10 @@ export async function gatherContextAgent(
     metadata: AGENT_METADATA["gather-context"],
     resultSchema: GatherContextResultSchema,
     hooks: agentHooks,
-    fn: (response: string) => parseJsonResponse(response),
+    fn: parseJsonResponse<GatherContextResult>,
   });
 
-  // If no questions or no sessionId, return the result
+  // If no questions or no sessionId, return result
   if (
     !sessionId ||
     !firstResult.questions ||
@@ -274,78 +401,42 @@ export async function gatherContextAgent(
     return firstResult;
   }
 
-  // Ask questions (max 5)
+  // Limit to 5 questions maximum
   const questions = firstResult.questions.slice(0, 5);
 
-  // Notify UI about questions
-  await step.run("gather-context-send-questions", async () => {
-    addStreamingMessage(sessionId, {
-      data: {
-        type: "questions",
-        content: "The AI needs more information to continue.",
-        questions: questions,
-        agentName: "gather-context",
-        metadata: AGENT_METADATA["gather-context"],
-      },
-    });
+  // Notify UI that questions are ready
+  await step.run("gather-context-notify-questions", async () => {
+    broadcastQuestionsToSession(
+      sessionId,
+      questions,
+      "gather-context",
+      AGENT_METADATA["gather-context"],
+    );
   });
 
-  // Wait for answers - use deterministic step ID so Inngest can resume correctly
+  // Wait for user answers (human-in-the-loop)
   const answers = await askUser(step, {
     questions,
     sessionId,
+    stepId: "gather-context-wait-for-answers", // Deterministic step ID!
     timeout: "1h",
     eventName: "feature.validation.answers.provided",
-    stepId: "gather-context-wait-for-answers",
   });
 
-  // Build context with answers
-  const answersContext = Object.entries(answers)
-    .map(([q, a]) => `Q: ${q}\nA: ${a}`)
-    .join("\n\n");
-
+  // Format answers for the prompt
+  const answersContext = formatAnswersAsContext(answers);
   const updatedContext = existingContext
     ? `${existingContext}\n\nUser provided answers:\n${answersContext}`
     : `User provided answers:\n${answersContext}`;
 
-  // Second run: NO questions allowed, must proceed with what we have
+  // Second pass: proceed with gathered context (no more questions)
   const secondResult = await runAgent<GatherContextResult>({
     step,
     name: "gather-context-final",
-    provider: await createLLMClient({
-      type: "anthropic",
-      apiKey: getAnthropicApiKey(),
-    }),
-    prompt: {
-      messages: [
-        {
-          role: "system",
-          content: `You are a product strategy advisor. You have gathered context about a feature request.
-
-Context gathered:
-{{existingContext}}
-
-Based on this context, provide your analysis. Do NOT ask any more questions - work with what you have. If information is incomplete, note what's missing in your reasoning.
-
-Respond in JSON format:
-{
-  "reasoning": "Your analysis of the context gathered",
-  "hasEnoughContext": true,
-  "summary": "Brief summary of the context you have"
-}`,
-        },
-        {
-          role: "user",
-          content: `Feature to evaluate: {{featureDescription}}`,
-        },
-      ],
-      variables: {
-        featureDescription,
-        existingContext: updatedContext,
-      },
-    },
+    provider,
+    prompt: gatherContextFinalPrompt(featureDescription, updatedContext),
     config: {
-      model: "claude-haiku-4-5-20251001",
+      model: DEFAULT_MODEL,
       temperature: 0.7,
       maxTokens: 2000,
     },
@@ -354,12 +445,25 @@ Respond in JSON format:
     metadata: AGENT_METADATA["gather-context"],
     resultSchema: GatherContextResultSchema,
     hooks: agentHooks,
-    fn: (response: string) => parseJsonResponse(response),
+    fn: parseJsonResponse<GatherContextResult>,
   });
 
   return secondResult;
 }
 
+/**
+ * Analyze a feature for impact, value, and strategic alignment.
+ *
+ * This agent evaluates the feature across multiple dimensions
+ * and provides scores along with a recommendation.
+ *
+ * @param step - Inngest step tools
+ * @param featureDescription - The feature to evaluate
+ * @param context - Context gathered from previous agent
+ * @param sessionId - Optional session ID for streaming
+ * @param hooks - Optional lifecycle hooks
+ * @returns Analysis result with scores and recommendation
+ */
 export async function analyzeFeatureAgent(
   step: StepTools,
   featureDescription: string,
@@ -367,73 +471,95 @@ export async function analyzeFeatureAgent(
   sessionId?: string,
   hooks?: AgentHooks<AnalyzeFeatureResult>,
 ): Promise<AnalyzeFeatureResult> {
-  return await runAgent<AnalyzeFeatureResult>({
+  const provider = await getProvider();
+  const tools = [
+    getCurrentDateTool,
+    searchKnowledgeBaseTool,
+    estimateComplexityTool,
+  ];
+
+  // Validate tools before use
+  validateTools(tools);
+
+  return runAgent<AnalyzeFeatureResult>({
     step,
     name: "analyze-feature",
-    provider: await createLLMClient({
-      type: "anthropic",
-      apiKey: getAnthropicApiKey(),
-    }),
+    provider,
     prompt: analyzeFeaturePrompt(featureDescription, context),
     config: {
-      model: "claude-haiku-4-5-20251001",
+      model: DEFAULT_MODEL,
       temperature: 0.7,
       maxTokens: 3000,
     },
-    tools: [
-      getCurrentDateTool,
-      searchKnowledgeBaseTool,
-      estimateComplexityTool,
-    ],
+    tools,
     streaming: sessionId ? { sessionId } : undefined,
     metadata: AGENT_METADATA["analyze-feature"],
     resultSchema: AnalyzeFeatureResultSchema,
     hooks: hooks ?? createLoggingHooks<AnalyzeFeatureResult>(),
-    fn: (response: string) => parseJsonResponse(response),
+    fn: parseJsonResponse<AnalyzeFeatureResult>,
   });
 }
 
+/**
+ * Generate a comprehensive validation report.
+ *
+ * This agent creates a markdown-formatted report summarizing
+ * the analysis findings and recommendation.
+ *
+ * @param step - Inngest step tools
+ * @param analysisResult - Analysis result from previous agent
+ * @param sessionId - Optional session ID for streaming
+ * @param hooks - Optional lifecycle hooks
+ * @returns Markdown report string
+ */
 export async function generateReportAgent(
   step: StepTools,
   analysisResult: AnalyzeFeatureResult,
   sessionId?: string,
   hooks?: AgentHooks<GenerateReportResult>,
 ): Promise<GenerateReportResult> {
-  return await runAgent<GenerateReportResult>({
+  const provider = await getProvider();
+
+  return runAgent<GenerateReportResult>({
     step,
     name: "generate-report",
-    provider: await createLLMClient({
-      type: "anthropic",
-      apiKey: getAnthropicApiKey(),
-    }),
+    provider,
     prompt: generateReportPrompt(analysisResult),
     config: {
-      model: "claude-haiku-4-5-20251001",
-      temperature: 0.5,
+      model: DEFAULT_MODEL,
+      temperature: 0.5, // Lower temperature for more consistent reports
       maxTokens: 4000,
     },
     streaming: sessionId ? { sessionId } : undefined,
     metadata: AGENT_METADATA["generate-report"],
     resultSchema: GenerateReportResultSchema,
     hooks: hooks ?? createLoggingHooks<GenerateReportResult>(),
-    fn: (response: string) => response,
+    fn: (response: string) => response, // Report is plain text/markdown
   });
 }
 
 // ============================================================================
-// Pipeline Definition - Compose agents into a single workflow
+// Pipeline Definition
 // ============================================================================
 
 /**
  * Feature validation pipeline that composes all three agents.
- * This provides a simplified API for running the entire workflow.
+ *
+ * This pipeline demonstrates:
+ * - Sequential agent execution
+ * - Context passing between agents via mapInput
+ * - Input/output schema validation
+ * - Pipeline lifecycle hooks
  *
  * @example
  * ```typescript
  * const result = await featureValidationPipeline.run(
  *   step,
- *   { featureDescription: "Add dark mode", existingContext: "" },
- *   sessionId
+ *   {
+ *     featureDescription: "Add dark mode support",
+ *     existingContext: "B2B SaaS platform for project management",
+ *   },
+ *   sessionId,
  * );
  * ```
  */
@@ -445,19 +571,27 @@ export const featureValidationPipeline = createAgentPipeline<
     name: "feature-validation",
     description:
       "Validate a feature request through context gathering, analysis, and report generation",
+    hooks: createPipelineHooks<FeatureValidationInput, GenerateReportResult>(),
   },
   [
-    defineAgent<GatherContextInput, GatherContextResult>({
+    // Agent 1: Gather Context
+    defineAgent<
+      GatherContextInput,
+      GatherContextResult,
+      FeatureValidationInput,
+      FeatureValidationInput,
+      Record<string, unknown>
+    >({
       name: "gather-context",
       description: "Gather context and determine if enough information exists",
       inputSchema: GatherContextInputSchema,
       outputSchema: GatherContextResultSchema,
-      mapInput: (_prev, ctx: PipelineContext) => ({
+      mapInput: (_prev, ctx) => ({
         featureDescription: ctx.initialInput.featureDescription,
         existingContext: ctx.initialInput.existingContext || "",
       }),
       run: async (step, input, sessionId) => {
-        return await gatherContextAgent(
+        return gatherContextAgent(
           step,
           input.featureDescription,
           input.existingContext || "",
@@ -465,18 +599,26 @@ export const featureValidationPipeline = createAgentPipeline<
         );
       },
     }),
-    defineAgent<AnalyzeFeatureInput, AnalyzeFeatureResult>({
+
+    // Agent 2: Analyze Feature
+    defineAgent<
+      AnalyzeFeatureInput,
+      AnalyzeFeatureResult,
+      GatherContextResult,
+      FeatureValidationInput,
+      { "gather-context": GatherContextResult }
+    >({
       name: "analyze-feature",
       description:
         "Analyze the feature for impact, value, and strategic alignment",
       inputSchema: AnalyzeFeatureInputSchema,
       outputSchema: AnalyzeFeatureResultSchema,
-      mapInput: (_prev, ctx: PipelineContext) => ({
+      mapInput: (_prev, ctx) => ({
         featureDescription: ctx.initialInput.featureDescription,
         context: JSON.stringify(ctx.results["gather-context"]),
       }),
       run: async (step, input, sessionId) => {
-        return await analyzeFeatureAgent(
+        return analyzeFeatureAgent(
           step,
           input.featureDescription,
           input.context,
@@ -484,16 +626,27 @@ export const featureValidationPipeline = createAgentPipeline<
         );
       },
     }),
-    defineAgent<GenerateReportInput, GenerateReportResult>({
+
+    // Agent 3: Generate Report
+    defineAgent<
+      GenerateReportInput,
+      GenerateReportResult,
+      AnalyzeFeatureResult,
+      FeatureValidationInput,
+      {
+        "gather-context": GatherContextResult;
+        "analyze-feature": AnalyzeFeatureResult;
+      }
+    >({
       name: "generate-report",
       description: "Generate a comprehensive validation report",
       inputSchema: GenerateReportInputSchema,
       outputSchema: GenerateReportResultSchema,
-      mapInput: (_prev, ctx: PipelineContext) => ({
+      mapInput: (_prev, ctx) => ({
         analysisResult: ctx.results["analyze-feature"],
       }),
       run: async (step, input, sessionId) => {
-        return await generateReportAgent(step, input.analysisResult, sessionId);
+        return generateReportAgent(step, input.analysisResult, sessionId);
       },
     }),
   ],
