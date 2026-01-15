@@ -16,7 +16,6 @@ This library solves all of these by building on Inngest's durable execution mode
 
 - **Multi-Provider LLM Support** - OpenAI, Anthropic, Gemini, Grok, Azure OpenAI (all with tool calling)
 - **Automatic Retries** - Failed LLM calls retry automatically
-- **Checkpointing** - Resume workflows from where they left off
 - **Tool Calling** - Pre-call and post-call tools with progress reporting
 - **Agent Pipelines** - Chain agents with lifecycle hooks and error recovery
 - **Human-in-the-Loop** - Pause workflows to ask users questions
@@ -253,6 +252,76 @@ const pipeline = createAgentPipeline(
 // Run the entire pipeline
 const result = await pipeline.run(step, { query: "user request" }, sessionId);
 ```
+
+#### Parallel Agent Execution
+
+Run multiple agents concurrently *within the same workflow* when they don't depend on each other. All agents execute in parallel, and execution waits for all to complete before continuing. Use this when you need combined results from multiple agents.
+
+```typescript
+import { runAgentsInParallel } from "./ai/pipeline";
+
+// Example: Analyze a document from multiple angles simultaneously
+const results = await runAgentsInParallel(
+  step,
+  [
+    { name: "sentiment-analysis", run: sentimentAgent },
+    { name: "keyword-extraction", run: keywordAgent },
+    { name: "summarization", run: summaryAgent },
+  ],
+  { text: documentText },
+  sessionId,
+);
+
+// All agents have completed - access results by agent name
+const report = {
+  sentiment: results["sentiment-analysis"],  // { score: 0.8, label: "positive" }
+  keywords: results["keyword-extraction"],   // ["AI", "agents", "pipelines"]
+  summary: results["summarization"],         // "This document discusses..."
+};
+```
+
+#### Pipeline Transitions (Advanced)
+
+Transitions are for triggering *separate Inngest functions* at the end of a workflow. Unlike `runAgentsInParallel`, transitions are fire-and-forget - the current workflow exits and new independent workflows begin. Use this for event-driven architectures where workflows chain together.
+
+```typescript
+import {
+  linearTransition,
+  fanOutTransition,
+  conditionalTransition,
+  executeTransition,
+} from "./ai/pipeline";
+
+// Linear: trigger a single follow-up workflow
+const linear = linearTransition("send-notification");
+
+// Fan-out: trigger multiple independent workflows (fire-and-forget)
+// Each runs as its own Inngest function - we don't wait for results
+const fanOut = fanOutTransition([
+  "notify-slack",    // Runs independently
+  "send-email",      // Runs independently  
+  "update-analytics" // Runs independently
+]);
+
+// Conditional: route to different workflows based on result
+const conditional = conditionalTransition<AnalysisResult>(
+  [
+    { condition: (r) => r.priority === "critical", to: "escalate-to-oncall" },
+    { condition: (r) => r.priority === "high", to: "create-ticket" },
+    { condition: (r) => r.needsReview, to: "queue-for-review" },
+  ],
+  "archive", // default if no conditions match
+);
+
+// Execute at the end of an Inngest function to trigger next workflow(s)
+await executeTransition(step, conditional, result, functionRefs);
+```
+
+**When to use each:**
+| Use Case | Solution |
+|----------|----------|
+| Run agents in parallel, wait for all results, continue | `runAgentsInParallel` |
+| Trigger separate workflow(s) and exit | Transitions (`linearTransition`, `fanOutTransition`, `conditionalTransition`) |
 
 ### Human-in-the-Loop
 

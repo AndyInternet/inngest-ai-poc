@@ -531,7 +531,7 @@ For complex workflows with conditional routing.
 ```typescript
 import {
   linearTransition,
-  branchTransition,
+  fanOutTransition,
   conditionalTransition,
   executeTransition,
 } from "./ai/pipeline";
@@ -539,8 +539,8 @@ import {
 // Linear: single next step
 const linear = linearTransition("next-agent");
 
-// Branch: multiple parallel steps
-const branch = branchTransition(["agent-a", "agent-b", "agent-c"]);
+// Fan-out: multiple parallel steps
+const fanOut = fanOutTransition(["agent-a", "agent-b", "agent-c"]);
 
 // Conditional: route based on result
 const conditional = conditionalTransition<MyResult>(

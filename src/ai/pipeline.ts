@@ -612,14 +612,14 @@ export function linearTransition(to: string): PipelineTransition<unknown> {
 }
 
 /**
- * Create a branch transition to multiple targets (fan-out).
+ * Create a fan-out transition to multiple targets in parallel.
  * The same result is passed to all target functions/events.
  *
  * @param to - Array of target agent/function names
  *
  * @example
  * ```typescript
- * const transition = branchTransition([
+ * const transition = fanOutTransition([
  *   "send-notification",
  *   "update-database",
  *   "log-analytics",
@@ -627,7 +627,7 @@ export function linearTransition(to: string): PipelineTransition<unknown> {
  * await executeTransition(step, transition, result, functionRefs);
  * ```
  */
-export function branchTransition(to: string[]): PipelineTransition<unknown> {
+export function fanOutTransition(to: string[]): PipelineTransition<unknown> {
   return { type: "branch", to };
 }
 
