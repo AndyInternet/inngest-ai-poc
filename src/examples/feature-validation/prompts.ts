@@ -159,7 +159,7 @@ Use the searchKnowledgeBase tool to find relevant product or strategy informatio
 Respond in JSON format:
 {
   "reasoning": "Your detailed chain-of-thought analysis",
-  "recommendation": "yes" or "no",
+  "recommendation": "yes", "no", or "conditional" (MUST be exactly one of these three values),
   "impactScore": 1-10,
   "valueScore": 1-10,
   "strategicAlignmentScore": 1-10,
@@ -168,7 +168,9 @@ Respond in JSON format:
   "pros": ["pro1", "pro2", ...],
   "cons": ["con1", "con2", ...],
   "summary": "Brief summary of recommendation"
-}`,
+}
+
+IMPORTANT: The "recommendation" field MUST be exactly one of: "yes", "no", or "conditional". No other values are allowed.`,
       },
       {
         role: "user",
@@ -220,7 +222,7 @@ Brief overview of the recommendation and key findings.
 What the feature is and what problem it solves.
 
 ## Recommendation
-Clear YES or NO with the overall score and brief justification.
+Clear YES, NO, or CONDITIONAL with the overall score and brief justification.
 
 ## Detailed Analysis
 

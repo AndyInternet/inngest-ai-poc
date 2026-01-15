@@ -101,8 +101,8 @@ export type GatherContextResult = z.infer<typeof GatherContextResultSchema>;
 export const AnalyzeFeatureResultSchema = z.object({
   reasoning: z.string().describe("Detailed chain-of-thought analysis"),
   recommendation: z
-    .enum(["yes", "no"])
-    .describe("Whether the feature should be built"),
+    .enum(["yes", "no", "conditional"])
+    .describe("Whether the feature should be built (yes, no, or conditional)"),
   impactScore: z
     .number()
     .int()

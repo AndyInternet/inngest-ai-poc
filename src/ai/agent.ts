@@ -276,10 +276,20 @@ async function handleStreamingLLMCall(
       }
     }
 
-    // If no finish reason was provided, still return the content
+    // If no finish reason was provided, still broadcast and return the content
     if (streamingConfig.onComplete) {
       await streamingConfig.onComplete(fullContent);
     }
+
+    // Broadcast final message even if no explicit finishReason was received
+    globalStreamingManager.addMessage(
+      sessionId,
+      createLLMResponseMessage(agentName, fullContent, iteration, {
+        streaming: false,
+        hasToolCalls: false,
+        metadata,
+      }),
+    );
 
     return {
       content: fullContent,
