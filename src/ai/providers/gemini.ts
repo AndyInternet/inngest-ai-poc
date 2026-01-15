@@ -1,5 +1,12 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import type { LLMProvider, LLMMessage, LLMConfig, LLMResponse, LLMStreamChunk, ProviderConfig } from './index';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import type {
+  LLMProvider,
+  LLMMessage,
+  LLMConfig,
+  LLMResponse,
+  LLMStreamChunk,
+  ProviderConfig,
+} from "../types";
 
 export class GeminiProvider implements LLMProvider {
   private client: GoogleGenerativeAI;
@@ -8,16 +15,19 @@ export class GeminiProvider implements LLMProvider {
     this.client = new GoogleGenerativeAI(config.apiKey);
   }
 
-  async complete(messages: LLMMessage[], config: LLMConfig): Promise<LLMResponse> {
+  async complete(
+    messages: LLMMessage[],
+    config: LLMConfig,
+  ): Promise<LLMResponse> {
     const model = this.client.getGenerativeModel({
       model: config.model,
     });
 
-    const systemMessages = messages.filter(m => m.role === 'system');
-    const conversationMessages = messages.filter(m => m.role !== 'system');
+    const systemMessages = messages.filter((m) => m.role === "system");
+    const conversationMessages = messages.filter((m) => m.role !== "system");
 
-    const history = conversationMessages.slice(0, -1).map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
+    const history = conversationMessages.slice(0, -1).map((msg) => ({
+      role: msg.role === "assistant" ? "model" : "user",
       parts: [{ text: msg.content }],
     }));
 
@@ -28,7 +38,10 @@ export class GeminiProvider implements LLMProvider {
         maxOutputTokens: config.maxTokens,
         topP: config.topP,
       },
-      systemInstruction: systemMessages.length > 0 ? systemMessages.map(m => m.content).join('\n') : undefined,
+      systemInstruction:
+        systemMessages.length > 0
+          ? systemMessages.map((m) => m.content).join("\n")
+          : undefined,
     });
 
     const lastMessage = conversationMessages[conversationMessages.length - 1];
@@ -38,24 +51,29 @@ export class GeminiProvider implements LLMProvider {
     return {
       content: response.text(),
       finishReason: response.candidates?.[0]?.finishReason,
-      usage: response.usageMetadata ? {
-        promptTokens: response.usageMetadata.promptTokenCount || 0,
-        completionTokens: response.usageMetadata.candidatesTokenCount || 0,
-        totalTokens: response.usageMetadata.totalTokenCount || 0,
-      } : undefined,
+      usage: response.usageMetadata
+        ? {
+            promptTokens: response.usageMetadata.promptTokenCount || 0,
+            completionTokens: response.usageMetadata.candidatesTokenCount || 0,
+            totalTokens: response.usageMetadata.totalTokenCount || 0,
+          }
+        : undefined,
     };
   }
 
-  async *stream(messages: LLMMessage[], config: LLMConfig): AsyncIterableIterator<LLMStreamChunk> {
+  async *stream(
+    messages: LLMMessage[],
+    config: LLMConfig,
+  ): AsyncIterableIterator<LLMStreamChunk> {
     const model = this.client.getGenerativeModel({
       model: config.model,
     });
 
-    const systemMessages = messages.filter(m => m.role === 'system');
-    const conversationMessages = messages.filter(m => m.role !== 'system');
+    const systemMessages = messages.filter((m) => m.role === "system");
+    const conversationMessages = messages.filter((m) => m.role !== "system");
 
-    const history = conversationMessages.slice(0, -1).map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
+    const history = conversationMessages.slice(0, -1).map((msg) => ({
+      role: msg.role === "assistant" ? "model" : "user",
       parts: [{ text: msg.content }],
     }));
 
@@ -66,7 +84,10 @@ export class GeminiProvider implements LLMProvider {
         maxOutputTokens: config.maxTokens,
         topP: config.topP,
       },
-      systemInstruction: systemMessages.length > 0 ? systemMessages.map(m => m.content).join('\n') : undefined,
+      systemInstruction:
+        systemMessages.length > 0
+          ? systemMessages.map((m) => m.content).join("\n")
+          : undefined,
     });
 
     const lastMessage = conversationMessages[conversationMessages.length - 1];

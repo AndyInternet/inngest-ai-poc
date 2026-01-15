@@ -974,6 +974,15 @@
 
             function getMessageKey(data) {
                 // Create unique key for message to track updates
+                // For tool messages, use toolName to group them together
+                if (
+                    data.type === "tool_start" ||
+                    data.type === "tool_progress" ||
+                    data.type === "tool_result" ||
+                    data.type === "tool_error"
+                ) {
+                    return `tool-${data.toolName}-${data.agentName}-${data.iteration || "1"}`;
+                }
                 return `${data.type}-${data.agentName}-${data.iteration || "1"}`;
             }
 
@@ -991,20 +1000,35 @@
                 const agentName = data.agentName || "AI Agent";
                 const iteration = data.iteration || "N/A";
 
+                // Use metadata for rich display when available
+                const displayName = data.metadata?.displayName || agentName;
+                const agentIcon = data.metadata?.icon || "";
+                const agentDescription = data.metadata?.description || "";
+
                 let header = "";
                 let content = "";
                 let icon = "";
 
                 switch (data.type) {
                     case "llm_response":
-                        icon = "🤖";
-                        header = `LLM Response - ${agentName}`;
+                        icon = agentIcon || "🤖";
+                        header = `LLM Response - ${displayName}`;
                         content = data.content;
                         break;
                     case "final_response":
-                        icon = "✅";
-                        header = `Final Response - ${agentName}`;
+                        icon = agentIcon || "✅";
+                        header = `Final Response - ${displayName}`;
                         content = data.content;
+                        break;
+                    case "tool_start":
+                        icon = "🔧";
+                        header = `Starting Tool - ${data.toolName}`;
+                        content = `Calling ${data.toolName} with arguments:\n${JSON.stringify(data.args, null, 2)}`;
+                        break;
+                    case "tool_progress":
+                        icon = "⏳";
+                        header = `Tool Progress - ${data.toolName}`;
+                        content = data.message;
                         break;
                     case "tool_result":
                         icon = "🔧";
@@ -1033,8 +1057,11 @@
                         content = JSON.stringify(data, null, 2);
                 }
 
-                // Update workflow step based on agent
-                if (data.agentName) {
+                // Update workflow step based on metadata (preferred) or fallback to agent name
+                if (data.metadata?.workflowStep) {
+                    updateWorkflowStep(data.metadata.workflowStep);
+                } else if (data.agentName) {
+                    // Fallback for backward compatibility
                     if (data.agentName.includes("gather-context")) {
                         updateWorkflowStep("context");
                     } else if (data.agentName.includes("analyze-feature")) {
@@ -1094,7 +1121,7 @@
                     <div class="message-header">
                         ${icon} ${header}
                     </div>
-                    <div class="message-meta">Agent: ${agentName} | Iteration: ${iteration} | ${timestamp}</div>
+                    <div class="message-meta">${agentDescription ? agentDescription + " | " : ""}Iteration: ${iteration} | ${timestamp}</div>
                     <div class="${contentClass}">
                         ${renderedContent}
                     </div>

@@ -54,3 +54,6 @@ Thumbs.db
 
 # Inngest
 .inngest/
+
+# Claude
+.claude/

@@ -6,7 +6,9 @@ import type {
   LLMResponse,
   LLMStreamChunk,
   ProviderConfig,
-} from "./index";
+  ToolCallResponse,
+  FunctionDefinition,
+} from "../types";
 
 export class OpenAIProvider implements LLMProvider {
   private client: OpenAI;
@@ -30,7 +32,7 @@ export class OpenAIProvider implements LLMProvider {
       };
 
       if (msg.toolCalls) {
-        base.tool_calls = msg.toolCalls.map((tc) => ({
+        base.tool_calls = msg.toolCalls.map((tc: ToolCallResponse) => ({
           id: tc.id,
           type: tc.type,
           function: {
@@ -53,7 +55,7 @@ export class OpenAIProvider implements LLMProvider {
       temperature: config.temperature,
       max_tokens: config.maxTokens,
       top_p: config.topP,
-      tools: config.tools?.map((tool) => ({
+      tools: config.tools?.map((tool: FunctionDefinition) => ({
         type: "function",
         function: {
           name: tool.name,
@@ -99,7 +101,7 @@ export class OpenAIProvider implements LLMProvider {
       };
 
       if (msg.toolCalls) {
-        base.tool_calls = msg.toolCalls.map((tc) => ({
+        base.tool_calls = msg.toolCalls.map((tc: ToolCallResponse) => ({
           id: tc.id,
           type: tc.type,
           function: {

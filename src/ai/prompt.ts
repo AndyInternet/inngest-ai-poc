@@ -1,15 +1,5 @@
 import Mustache from "mustache";
-import type { LLMMessage } from "./providers/index";
-
-export type PromptMessage = {
-  role: "system" | "user" | "assistant";
-  content: string;
-};
-
-export type Prompt = {
-  messages: PromptMessage[];
-  variables: Record<string, string>;
-};
+import type { LLMMessage, Prompt } from "./types";
 
 export function hydratePrompt(prompt: Prompt): LLMMessage[] {
   return prompt.messages.map((message) => ({

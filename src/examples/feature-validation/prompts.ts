@@ -1,9 +1,12 @@
-import type { Prompt } from '../../ai/prompt';
+import type { Prompt } from "../../ai/types";
 
-export const gatherContextPrompt = (featureDescription: string, existingContext: string): Prompt => ({
+export const gatherContextPrompt = (
+  featureDescription: string,
+  existingContext: string,
+): Prompt => ({
   messages: [
     {
-      role: 'system',
+      role: "system",
       content: `You are a product strategy advisor using Chain-of-Thought reasoning. Your role is to determine if you have enough context to evaluate a feature request.
 
 You need to understand:
@@ -22,26 +25,26 @@ Respond in JSON format:
   "reasoning": "Your chain-of-thought analysis",
   "hasEnoughContext": true/false,
   "questions": ["question1", "question2"] // only if hasEnoughContext is false
-}`
+}`,
     },
     {
-      role: 'user',
-      content: `Feature to evaluate: {{featureDescription}}`
-    }
+      role: "user",
+      content: `Feature to evaluate: {{featureDescription}}`,
+    },
   ],
   variables: {
     featureDescription,
-    existingContext: existingContext || 'None yet'
-  }
+    existingContext: existingContext || "None yet",
+  },
 });
 
 export const analyzeFeaturePrompt = (
   featureDescription: string,
-  context: string
+  context: string,
 ): Prompt => ({
   messages: [
     {
-      role: 'system',
+      role: "system",
       content: `You are a product strategy advisor using Chain-of-Thought and ReAct reasoning patterns.
 
 Context about the product, company, and audience:
@@ -67,23 +70,23 @@ Respond in JSON format:
   "pros": ["pro1", "pro2", ...],
   "cons": ["con1", "con2", ...],
   "summary": "Brief summary of recommendation"
-}`
+}`,
     },
     {
-      role: 'user',
-      content: `Feature to evaluate: {{featureDescription}}`
-    }
+      role: "user",
+      content: `Feature to evaluate: {{featureDescription}}`,
+    },
   ],
   variables: {
     featureDescription,
-    context
-  }
+    context,
+  },
 });
 
 export const generateReportPrompt = (analysisResult: any): Prompt => ({
   messages: [
     {
-      role: 'system',
+      role: "system",
       content: `You are generating a comprehensive feature evaluation report. Format it as a detailed, well-structured document.
 
 Analysis data:
@@ -98,14 +101,14 @@ Create a report with these sections:
 6. Reasoning and Rationale
 7. Next Steps (if recommended)
 
-Make it professional, clear, and actionable.`
+Make it professional, clear, and actionable.`,
     },
     {
-      role: 'user',
-      content: 'Generate the report based on the analysis provided.'
-    }
+      role: "user",
+      content: "Generate the report based on the analysis provided.",
+    },
   ],
   variables: {
-    analysisData: JSON.stringify(analysisResult, null, 2)
-  }
+    analysisData: JSON.stringify(analysisResult, null, 2),
+  },
 });
